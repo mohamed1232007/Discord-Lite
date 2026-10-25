@@ -1,0 +1,56 @@
+@import "tailwindcss";
+
+:root {
+  color-scheme: dark;
+}
+
+body {
+  margin: 0;
+  padding: 0;
+  background-color: #000000;
+  color: #dbdee1;
+  overflow: hidden;
+  user-select: none;
+  font-family: 'gg sans', 'Noto Sans', 'Helvetica Neue', Helvetica, Arial, sans-serif;
+}
+
+/* Discord Style Overlay Scrollbar - invisible by default, appears on container hover */
+.discord-scrollbar {
+  scrollbar-width: thin;
+  scrollbar-color: transparent transparent;
+  transition: scrollbar-color 0.2s ease-in-out;
+}
+
+.discord-scrollbar:hover {
+  scrollbar-color: #2b2d31 transparent;
+}
+
+.discord-scrollbar::-webkit-scrollbar {
+  width: 5px;
+  height: 5px;
+}
+
+.discord-scrollbar::-webkit-scrollbar-track {
+  background: transparent;
+}
+
+.discord-scrollbar::-webkit-scrollbar-thumb {
+  background: transparent;
+  border-radius: 4px;
+}
+
+.discord-scrollbar:hover::-webkit-scrollbar-thumb {
+  background: #313338;
+}
+
+.discord-scrollbar::-webkit-scrollbar-thumb:hover {
+  background: #404249;
+}
+
+.no-scrollbar::-webkit-scrollbar {
+  display: none;
+}
+.no-scrollbar {
+  -ms-overflow-style: none;
+  scrollbar-width: none;
+}
