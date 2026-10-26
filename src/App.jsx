@@ -15,7 +15,9 @@ import DiscordUpdater from './components/DiscordUpdater';
 function MainApp() {
   const { user, loading } = useAuth();
   const { activeCall } = useVoice();
-  const [updaterFinished, setUpdaterFinished] = useState(false);
+  // شاشة التحديث تظهر فقط داخل تطبيق الويندوز (Tauri)، ولا تظهر لزوار الموقع في المتصفح
+  const isTauriApp = typeof window !== 'undefined' && Boolean(window.__TAURI_INTERNALS__ || window.__TAURI__);
+  const [updaterFinished, setUpdaterFinished] = useState(!isTauriApp);
 
   // تذكّر الصفحة المفضلة، وإذا كان المستخدم مسجل دخوله في جلسة سابقة يدخل مباشرة للـ app
   const [currentView, setCurrentView] = useState(() => {

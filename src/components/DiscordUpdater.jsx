@@ -55,7 +55,7 @@ export default function DiscordUpdater({ onFinished }) {
         if (update && update.available) {
           console.log('[Updater] Update found:', update.version);
           setStatus('downloading');
-          setStatusText(`Downloading update v${update.version}...`);
+          setStatusText('Downloading update...');
 
           let downloaded = 0;
           let contentLength = 0;
@@ -132,12 +132,9 @@ export default function DiscordUpdater({ onFinished }) {
         </div>
       </div>
 
-      {/* App Title & Version */}
-      <h1 className="text-white text-xl font-bold tracking-wider mb-2 flex items-center gap-2">
-        <span>Discord Lite</span>
-        <span className="text-xs bg-[#5865f2]/20 text-[#5865f2] border border-[#5865f2]/40 px-2 py-0.5 rounded-full font-semibold">
-          v0.1.0
-        </span>
+      {/* App Title */}
+      <h1 className="text-white text-xl font-bold tracking-wider mb-2">
+        Discord Lite
       </h1>
 
       {/* Status Text & Spinner */}
