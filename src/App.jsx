@@ -24,6 +24,7 @@ function MainApp() {
     const savedView = localStorage.getItem('dis_lite_view');
     const token = localStorage.getItem('dis_lite_token');
     if (token) return 'app';
+    if (isTauriApp) return 'login'; // في تطبيق الويندوز: يفتح شاشة تسجيل الدخول مباشرة بدون صفحة الموقع
     return savedView || 'landing';
   });
 
@@ -74,7 +75,7 @@ function MainApp() {
 
   return (
     <>
-      {currentView === 'landing' ? (
+      {currentView === 'landing' && !isTauriApp ? (
         <LandingPage 
           onOpenApp={() => changeView('app')}
           onOpenLogin={() => {
@@ -85,9 +86,9 @@ function MainApp() {
             }
           }}
         />
-      ) : currentView === 'login' ? (
+      ) : currentView === 'login' || (isTauriApp && currentView === 'landing') ? (
         <LoginPage 
-          onBackToLanding={() => changeView('landing')}
+          onBackToLanding={() => changeView(isTauriApp ? 'login' : 'landing')}
           onSuccess={() => changeView('app')}
         />
       ) : (
