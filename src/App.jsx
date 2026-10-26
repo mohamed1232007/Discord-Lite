@@ -10,10 +10,12 @@ import CallScreen from './components/CallScreen';
 import CallOverlay from './components/CallOverlay';
 import LandingPage from './components/LandingPage';
 import LoginPage from './components/LoginPage';
+import DiscordUpdater from './components/DiscordUpdater';
 
 function MainApp() {
   const { user, loading } = useAuth();
   const { activeCall } = useVoice();
+  const [updaterFinished, setUpdaterFinished] = useState(false);
 
   // تذكّر الصفحة المفضلة، وإذا كان المستخدم مسجل دخوله في جلسة سابقة يدخل مباشرة للـ app
   const [currentView, setCurrentView] = useState(() => {
@@ -54,6 +56,10 @@ function MainApp() {
       changeView('app');
     }
   }, [activeCall]);
+
+  if (!updaterFinished) {
+    return <DiscordUpdater onFinished={() => setUpdaterFinished(true)} />;
+  }
 
   if (loading) {
     return (
