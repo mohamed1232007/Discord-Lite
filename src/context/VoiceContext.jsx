@@ -22,6 +22,8 @@ export const VoiceProvider = ({ children }) => {
   const [isRemoteScreenSharing, setIsRemoteScreenSharing] = useState(false);
   const [isRemoteCamera,        setIsRemoteCamera]        = useState(false);
   const [peerReady,       setPeerReady]      = useState(false);
+  const [callParticipants, setCallParticipants] = useState([]);
+  const [remoteStreams, setRemoteStreams] = useState([]);
 
   // ── Audio Devices State ────────────────────────────────
   const [microphones,     setMicrophones]    = useState([]);
@@ -29,26 +31,36 @@ export const VoiceProvider = ({ children }) => {
   const [selectedMic,     setSelectedMic]    = useState('default');
   const [selectedSpeaker, setSelectedSpeaker]= useState('default');
   const [isNoiseSuppressionEnabled, setIsNoiseSuppressionEnabled] = useState(true);
+  const [isNoiseSuppressionActive, setIsNoiseSuppressionActive] = useState(false);
 
   // ── Refs (لا تتغيرش بين renders) ──────────────────────
   const peerRef         = useRef(null);      // PeerJS instance
   const peerCallRef     = useRef(null);      // MediaConnection الحالية
-  const pendingCallRef  = useRef(null);      // call PeerJS واردة منتظرة Accept
+  const peerCallsRef    = useRef(new Map());
+  const pendingCallRef  = useRef(new Map()); // مكالمات PeerJS الواردة حسب المشارك
   const localStreamRef  = useRef(null);
   const rawMicStreamRef = useRef(null);      // Raw mic stream قبل الفلتر
   const denoiseCleanupRef = useRef(null);    // دالة تنظيف RNNoise
+  const noiseSuppressionActiveRef = useRef(false);
   const remoteStreamRef = useRef(null);
+  const remoteStreamsRef = useRef([]);
   const remoteDenoiseCleanupRef = useRef(null); // تنظيف فلتر الطرف المستقبل
+  const remoteAudioElementsRef = useRef(new Map());
   const screenStreamRef = useRef(null);
   const dbCallIdRef     = useRef(null);
   const activeCallRef   = useRef(null);      // mirror of activeCall state (للـ closures)
   const mediaChannelRef = useRef(null);
-  const dataConnectionRef = useRef(null);
+  const dataConnectionRef = useRef(new Map());
+  const incomingCallRef = useRef(incomingCall);
+  const pendingIncomingRoomRef = useRef(null);
+  const callParticipantsRef = useRef(callParticipants);
+  const localMembershipActiveRef = useRef(false);
+  const endCallCleanupRef = useRef(null);
 
   // إعداد قناة البيانات المباشرة WebRTC P2P DataChannel
   const setupDataConnection = (conn) => {
     if (!conn) return;
-    dataConnectionRef.current = conn;
+    dataConnectionRef.current.set(conn.peer, conn);
     conn.on('data', (data) => {
       console.log('[PeerData received]', data);
       if (data?.type === 'screen') {
@@ -58,8 +70,8 @@ export const VoiceProvider = ({ children }) => {
       }
     });
     conn.on('close', () => {
-      if (dataConnectionRef.current === conn) {
-        dataConnectionRef.current = null;
+      if (dataConnectionRef.current.get(conn.peer) === conn) {
+        dataConnectionRef.current.delete(conn.peer);
       }
     });
     conn.on('error', (err) => console.warn('[PeerData error]', err));
@@ -69,13 +81,14 @@ export const VoiceProvider = ({ children }) => {
   const sendMediaSignal = (payload) => {
     const fullPayload = { ...payload, senderId: user?.id };
     // 1. إرسال فوري P2P عبر WebRTC DataChannel (أسرع وأضمن)
-    if (dataConnectionRef.current && dataConnectionRef.current.open) {
+    dataConnectionRef.current.forEach((connection) => {
+      if (!connection.open) return;
       try {
-        dataConnectionRef.current.send(fullPayload);
+        connection.send(fullPayload);
       } catch (err) {
         console.warn('[PeerData send error]', err);
       }
-    }
+    });
     // 2. إرسال عبر Supabase Realtime broadcast
     if (mediaChannelRef.current) {
       mediaChannelRef.current.send({
@@ -88,7 +101,7 @@ export const VoiceProvider = ({ children }) => {
 
   // مراقبة قناة إشارات الميديا للمكالمة الحالية (شير سكرين وكاميرا)
   useEffect(() => {
-    if (!activeCall?.friend?.id || !user?.id) {
+    if (!activeCall?.roomId || !user?.id) {
       if (mediaChannelRef.current) {
         supabase.removeChannel(mediaChannelRef.current);
         mediaChannelRef.current = null;
@@ -98,9 +111,7 @@ export const VoiceProvider = ({ children }) => {
       return;
     }
 
-    // قناة موحدة ومؤكدة بين الطرفين مباشرة بناءً على User IDs
-    const pairId = [user.id, activeCall.friend.id].sort().join('_');
-    const ch = supabase.channel(`call-media-${pairId}`)
+    const ch = supabase.channel(`call-media-${activeCall.roomId}`)
       .on('broadcast', { event: 'media_state' }, ({ payload }) => {
         console.log('[MediaSignal received]', payload);
         if (payload?.senderId && payload.senderId !== user.id) {
@@ -121,17 +132,28 @@ export const VoiceProvider = ({ children }) => {
       supabase.removeChannel(ch);
       mediaChannelRef.current = null;
     };
-  }, [activeCall?.friend?.id, user?.id]);
+  }, [activeCall?.roomId, user?.id]);
 
   // DOM refs
   const remoteAudioRef = useRef(null);
   const localVideoRef  = useRef(null);
   const remoteVideoRef = useRef(null);
 
-  // keep activeCallRef & callStatusRef in sync
-  const callStatusRef = useRef(callStatus);
+  // Keep the latest call state available to asynchronous handlers.
   useEffect(() => { activeCallRef.current = activeCall; }, [activeCall]);
-  useEffect(() => { callStatusRef.current = callStatus; }, [callStatus]);
+  useEffect(() => { incomingCallRef.current = incomingCall; }, [incomingCall]);
+  useEffect(() => { callParticipantsRef.current = callParticipants; }, [callParticipants]);
+
+  const getPeerCalls = () => Array.from(peerCallsRef.current.values());
+  const replacePeerTrack = async (kind, track) => {
+    await Promise.all(getPeerCalls().map(async (call) => {
+      const pc = call.peerConnection;
+      if (!pc) return;
+      const sender = pc.getSenders().find((item) => item.track?.kind === kind)
+        || pc.getTransceivers?.().find((item) => item.receiver?.track?.kind === kind)?.sender;
+      if (sender) await sender.replaceTrack(track);
+    }));
+  };
 
   // ─────────────────────────────────────────────────────
   // Helper: Enumerate Audio Devices (جلب المايكات والسماعات الحقيقية)
@@ -179,9 +201,6 @@ export const VoiceProvider = ({ children }) => {
 
   // دالة تغيير المايك
   const changeMicrophone = async (deviceId) => {
-    setSelectedMic(deviceId);
-    toast.info('Microphone changed successfully');
-
     // لو في مكالمة شغالة، نستبدل مسار الصوت فوراً مع تطبيق الـ RNNoise
     if (activeCall && localStreamRef.current) {
       try {
@@ -198,15 +217,23 @@ export const VoiceProvider = ({ children }) => {
             autoGainControl: true,
           },
         });
+        rawMicStreamRef.current?.getTracks().forEach((track) => track.stop());
         rawMicStreamRef.current = newRawStream;
 
         let finalAudioTrack;
         if (isNoiseSuppressionEnabled) {
-          const { cleanStream, cleanup } = await applyRnnoiseDenoise(newRawStream);
+          const { cleanStream, cleanup, isActive } = await applyRnnoiseDenoise(newRawStream);
           denoiseCleanupRef.current = cleanup;
           finalAudioTrack = cleanStream.getAudioTracks()[0] || newRawStream.getAudioTracks()[0];
+          noiseSuppressionActiveRef.current = isActive;
+          setIsNoiseSuppressionActive(isActive);
+          if (!isActive) {
+            toast.warning('AI noise suppression could not start on the selected microphone.');
+          }
         } else {
           finalAudioTrack = newRawStream.getAudioTracks()[0];
+          noiseSuppressionActiveRef.current = false;
+          setIsNoiseSuppressionActive(false);
         }
 
         // إيقاف المسار القديم
@@ -218,17 +245,26 @@ export const VoiceProvider = ({ children }) => {
         finalAudioTrack.enabled = !isMuted;
 
         // استبدال في الـ WebRTC Sender
-        const pc = peerCallRef.current?.peerConnection;
-        if (pc) {
-          const audioSender = pc.getSenders().find((s) => s.track && s.track.kind === 'audio');
-          if (audioSender) {
-            audioSender.replaceTrack(finalAudioTrack);
-          }
+        await replacePeerTrack('audio', finalAudioTrack);
+        if (activeCall.roomId) {
+          const { error } = await supabase
+            .from('call_participants')
+            .update({ noise_suppression_enabled: noiseSuppressionActiveRef.current })
+            .eq('room_id', activeCall.roomId)
+            .eq('user_id', user.id);
+          if (error) console.error('[changeMicrophone] Failed to update noise status:', error);
         }
+        setSelectedMic(deviceId);
+        toast.success('Microphone changed successfully.');
       } catch (err) {
         console.error('[changeMicrophone] Error switching mic:', err);
+        toast.error('Could not switch microphones. Check the selected device and its permission.');
       }
+      return;
     }
+
+    setSelectedMic(deviceId);
+    toast.info('Microphone selected for your next call.');
   };
 
   // دالة تغيير السماعة
@@ -236,9 +272,14 @@ export const VoiceProvider = ({ children }) => {
     setSelectedSpeaker(deviceId);
     toast.info('Audio output device changed successfully');
 
-    if (remoteAudioRef.current && typeof remoteAudioRef.current.setSinkId === 'function') {
+    const audioElements = Array.from(remoteAudioElementsRef.current.values());
+    if (audioElements.some((element) => typeof element.setSinkId === 'function')) {
       try {
-        await remoteAudioRef.current.setSinkId(deviceId === 'default' ? '' : deviceId);
+        await Promise.all(audioElements.map((element) => (
+          typeof element.setSinkId === 'function'
+            ? element.setSinkId(deviceId === 'default' ? '' : deviceId)
+            : Promise.resolve()
+        )));
       } catch (err) {
         console.warn('[changeSpeaker] setSinkId error:', err);
       }
@@ -374,18 +415,35 @@ export const VoiceProvider = ({ children }) => {
         audio: audioConstraints,
         video: false
       });
+      if (rawStream.getAudioTracks().length === 0) {
+        rawStream.getTracks().forEach((track) => track.stop());
+        const error = new Error('The selected microphone did not provide an audio track.');
+        error.name = 'NotFoundError';
+        throw error;
+      }
       rawMicStreamRef.current = rawStream;
 
       // تطبيق الـ RNNoise Neural Denoising لإزالة الضوضاء العميقة
       let processedStream = rawStream;
       if (isNoiseSuppressionEnabled) {
         try {
-          const { cleanStream, cleanup } = await applyRnnoiseDenoise(rawStream);
+          const { cleanStream, cleanup, isActive } = await applyRnnoiseDenoise(rawStream);
           denoiseCleanupRef.current = cleanup;
           processedStream = cleanStream;
+          noiseSuppressionActiveRef.current = isActive;
+          setIsNoiseSuppressionActive(isActive);
+          if (!isActive) {
+            toast.warning('AI noise suppression is unavailable; microphone noise reduction remains enabled.');
+          }
         } catch (e) {
           console.warn('[RNNoise] Failed to apply denoiser on mic, using raw:', e);
+          noiseSuppressionActiveRef.current = false;
+          setIsNoiseSuppressionActive(false);
+          toast.warning('AI noise suppression is unavailable; microphone noise reduction remains enabled.');
         }
+      } else {
+        noiseSuppressionActiveRef.current = false;
+        setIsNoiseSuppressionActive(false);
       }
 
       // إضافة مسار فيديو خامل مسبقاً لكي يكون Video Sender جاهزاً للشير سكرين
@@ -393,50 +451,169 @@ export const VoiceProvider = ({ children }) => {
       if (blankTrack) {
         processedStream.addTrack(blankTrack);
       }
+      console.log('[acquireMediaStream] final stream tracks:', processedStream.getTracks().map(t => `${t.kind}(enabled=${t.enabled},readyState=${t.readyState})`));
       return processedStream;
     } catch (e) {
-      console.warn('[Media] mic unavailable, using synthetic stream');
-      const ctx = new (window.AudioContext || window.webkitAudioContext)();
-      const dst = ctx.createMediaStreamDestination();
-      const blankTrack = createBlankVideoTrack();
-      if (blankTrack) dst.stream.addTrack(blankTrack);
-      return dst.stream;
+      console.error('[Media] microphone unavailable:', e);
+      throw e;
     }
   };
+
+  const microphoneErrorMessage = (error) => (
+    ['NotAllowedError', 'NotFoundError', 'NotReadableError', 'OverconstrainedError'].includes(error?.name)
+      ? 'Could not access your microphone. Check its permission and selected device.'
+      : null
+  );
 
   // ─────────────────────────────────────────────────────
   // Helper: Attach remote stream to <audio>/<video>
   // ─────────────────────────────────────────────────────
-  const attachRemote = async (stream) => {
+  const attachRemote = async (stream, participantId) => {
     console.log('[Remote] attaching stream, tracks:', stream.getTracks().length);
-    remoteStreamRef.current = stream;
-
-    // الصوت المستقبَل يتم تشغيله نقياً ومباشراً بدون فلترة مزدوجة
-    if (remoteAudioRef.current) {
-      remoteAudioRef.current.srcObject = stream;
-      remoteAudioRef.current.muted = false;
-      remoteAudioRef.current.play().catch(e => console.warn('[Audio] play blocked:', e));
+    if (!remoteStreamsRef.current.some((entry) => entry.userId === participantId)) {
+      const nextStreams = [...remoteStreamsRef.current, { userId: participantId, stream }];
+      remoteStreamsRef.current = nextStreams;
+      setRemoteStreams(nextStreams);
     }
-    if (remoteVideoRef.current) {
-      remoteVideoRef.current.srcObject = stream;
-      remoteVideoRef.current.play().catch(e => console.warn('[Video] play blocked:', e));
+    if (!remoteStreamRef.current) {
+      remoteStreamRef.current = stream;
+      if (remoteVideoRef.current) {
+        remoteVideoRef.current.srcObject = stream;
+        remoteVideoRef.current.play().catch((e) => console.warn('[Video] play blocked:', e));
+      }
+    }
+    const audioElement = remoteAudioElementsRef.current.get(participantId);
+    if (audioElement) {
+      audioElement.srcObject = stream;
+      audioElement.muted = false;
+      audioElement.play().catch((e) => console.warn('[Audio] play blocked:', e));
     }
   };
 
   // ─────────────────────────────────────────────────────
   // Helper: Setup peerCall event listeners
   // ─────────────────────────────────────────────────────
-  const setupCallListeners = (call) => {
+  const getPeerUserId = (peerId) => callParticipantsRef.current
+    .find((participant) => participant.user_id.replace(/-/g, '') === peerId)?.user_id;
+
+  const answerPeerCall = (call, participantId) => {
+    if (!call || !participantId || !localStreamRef.current || peerCallsRef.current.has(participantId)) return;
+    if (!localStreamRef.current.getAudioTracks().some((track) => track.readyState === 'live')) {
+      toast.error('Your microphone track is unavailable.');
+      return;
+    }
+    try {
+      call.answer(localStreamRef.current);
+      peerCallsRef.current.set(participantId, call);
+      pendingCallRef.current.delete(call.peer);
+      if (!peerCallRef.current) peerCallRef.current = call;
+      setupCallListeners(call, participantId);
+    } catch (error) {
+      console.error('[PeerCall] Failed to answer participant:', participantId, error);
+      toast.error('Could not connect to a call participant.');
+      call.close();
+    }
+  };
+
+  const startPeerCall = (participantId) => {
+    if (!peerRef.current || !localStreamRef.current || peerCallsRef.current.has(participantId)) return;
+    if (user?.id >= participantId) return;
+    if (!localStreamRef.current.getAudioTracks().some((track) => track.readyState === 'live')) {
+      toast.error('Your microphone track is unavailable.');
+      return;
+    }
+
+    try {
+      const peerId = participantId.replace(/-/g, '');
+      const call = peerRef.current.call(peerId, localStreamRef.current);
+      if (!call) {
+        console.error('[PeerCall] Failed to create call for participant:', participantId);
+        toast.error('Could not connect to a call participant.');
+        return;
+      }
+      peerCallsRef.current.set(participantId, call);
+      if (!peerCallRef.current) peerCallRef.current = call;
+      setupCallListeners(call, participantId);
+      try {
+        const connection = peerRef.current.connect(peerId);
+        setupDataConnection(connection);
+      } catch (error) {
+        console.warn('[PeerCall] Data connection failed:', error);
+      }
+    } catch (error) {
+      console.error('[PeerCall] Failed to create participant connection:', participantId, error);
+      toast.error('Could not connect to a call participant.');
+    }
+  };
+
+  const syncPeerCalls = (participants) => {
+    const activeParticipants = participants.filter((participant) => participant.status === 'active');
+    activeParticipants.forEach((participant) => {
+      if (participant.user_id !== user?.id) startPeerCall(participant.user_id);
+    });
+    pendingCallRef.current.forEach((call, peerId) => {
+      const participantId = getPeerUserId(peerId);
+      if (!participantId) return;
+      if (activeParticipants.some((participant) => participant.user_id === participantId)) {
+        answerPeerCall(call, participantId);
+      } else {
+        pendingCallRef.current.delete(peerId);
+        call.close();
+      }
+    });
+  };
+
+  const setupCallListeners = (call, participantId) => {
     call.on('stream', async (remote) => {
-      console.log('[PeerCall] got remote stream ✓');
-      setCallStatus('connected'); // ← الاتصال تأكد فعلاً
-      await attachRemote(remote);
+      console.log('[PeerCall] got remote stream ✓, tracks:', remote.getTracks().map(t => `${t.kind}(enabled=${t.enabled})`));
+      if (remote.getAudioTracks().length === 0) {
+        console.error('[PeerCall] Remote participant provided no audio track:', participantId);
+        toast.error('A call participant has no active microphone audio.');
+        return;
+      }
+      setCallStatus('connected');
+
+      try {
+        const pc = call.peerConnection;
+        if (pc) {
+          console.log('[PeerCall] transceivers:', pc.getTransceivers().map((transceiver) => (
+            `${transceiver.receiver?.track?.kind}:${transceiver.direction}/${transceiver.currentDirection}`
+          )));
+        }
+      } catch (e) {
+        console.warn('[PeerCall] transceiver direction warning:', e);
+      }
+
+      await attachRemote(remote, participantId);
     });
     call.on('close', () => {
-      console.log('[PeerCall] closed');
-      endCallCleanup(false);
+      console.log('[PeerCall] closed for participant:', participantId);
+      if (peerCallsRef.current.get(participantId) === call) {
+        peerCallsRef.current.delete(participantId);
+      }
+      if (peerCallRef.current === call) {
+        peerCallRef.current = peerCallsRef.current.values().next().value || null;
+      }
+      dataConnectionRef.current.get(call.peer)?.close();
+      const disconnectedStream = remoteStreamsRef.current.find((entry) => entry.userId === participantId)?.stream;
+      const remainingStreams = remoteStreamsRef.current.filter((entry) => entry.userId !== participantId);
+      remoteStreamsRef.current = remainingStreams;
+      setRemoteStreams(remainingStreams);
+      if (remoteStreamRef.current === disconnectedStream) {
+        remoteStreamRef.current = remainingStreams[0]?.stream || null;
+        if (remoteVideoRef.current) {
+          remoteVideoRef.current.srcObject = remoteStreamRef.current;
+          remoteVideoRef.current.play().catch((e) => console.warn('[Video] play blocked:', e));
+        }
+      }
     });
-    call.on('error', (e) => console.error('[PeerCall] error:', e));
+    call.on('error', (error) => {
+      console.error('[PeerCall] error:', participantId, error);
+      const participantName = callParticipantsRef.current.find(
+        (participant) => participant.user_id === participantId
+      )?.user?.display_name || 'A participant';
+      toast.error(`${participantName} could not connect to the voice call.`);
+    });
   };
 
   // ─────────────────────────────────────────────────────
@@ -451,7 +628,23 @@ export const VoiceProvider = ({ children }) => {
       config: {
         iceServers: [
           { urls: 'stun:stun.l.google.com:19302' },
-          { urls: 'stun:stun1.l.google.com:19302' }
+          { urls: 'stun:stun1.l.google.com:19302' },
+          { urls: 'stun:stun.relay.metered.ca:80' },
+          {
+            urls: 'turn:global.relay.metered.ca:80',
+            username: 'openrelayproject',
+            credential: 'openrelayproject',
+          },
+          {
+            urls: 'turn:global.relay.metered.ca:443',
+            username: 'openrelayproject',
+            credential: 'openrelayproject',
+          },
+          {
+            urls: 'turn:global.relay.metered.ca:443?transport=tcp',
+            username: 'openrelayproject',
+            credential: 'openrelayproject',
+          },
         ]
       }
     });
@@ -475,7 +668,9 @@ export const VoiceProvider = ({ children }) => {
     // مكالمة واردة من PeerJS — نحفظها فقط، الرد يحصل في answerCall
     p.on('call', (call) => {
       console.log('[Peer] incoming PeerJS call from:', call.peer);
-      pendingCallRef.current = call;
+      const participantId = getPeerUserId(call.peer);
+      pendingCallRef.current.set(call.peer, call);
+      if (localMembershipActiveRef.current && participantId) answerPeerCall(call, participantId);
     });
 
     // اتصال بيانات P2P وارد للإشارات اللحظية
@@ -491,88 +686,210 @@ export const VoiceProvider = ({ children }) => {
     };
   }, [user?.id]);
 
+  const refreshCallParticipants = async (roomId) => {
+    const { data: rows, error } = await supabase
+      .from('call_participants')
+      .select('user_id, status, invited_by, noise_suppression_enabled')
+      .eq('room_id', roomId);
+    if (error) {
+      console.error('[Call] Failed to load participants:', error);
+      toast.error('Could not load the call participants.');
+      return [];
+    }
+
+    const userIds = rows.map((row) => row.user_id);
+    const { data: profiles, error: profileError } = userIds.length
+      ? await supabase.from('users').select('id, username, display_name, avatar_url').in('id', userIds)
+      : { data: [], error: null };
+    if (profileError) {
+      console.error('[Call] Failed to load participant profiles:', profileError);
+      toast.error('Could not load the call participants.');
+      return [];
+    }
+
+    const participants = rows.map((row) => ({
+      ...row,
+      user: profiles.find((profile) => profile.id === row.user_id) || { id: row.user_id },
+    }));
+    callParticipantsRef.current = participants;
+    setCallParticipants(participants);
+    if (participants.some((participant) => (
+      participant.user_id !== user?.id && participant.status === 'active'
+    ))) {
+      setCallStatus('connected');
+    }
+    setActiveCall((previous) => previous?.roomId === roomId
+      ? {
+          ...previous,
+          participants,
+          friend: participants.find((participant) => participant.user_id !== user?.id)?.user || previous.friend,
+        }
+      : previous);
+    syncPeerCalls(participants);
+
+    participants
+      .filter((participant) => participant.status !== 'active')
+      .forEach((participant) => {
+        const call = peerCallsRef.current.get(participant.user_id);
+        if (call) {
+          peerCallsRef.current.delete(participant.user_id);
+          if (peerCallRef.current === call) {
+            peerCallRef.current = peerCallsRef.current.values().next().value || null;
+          }
+          call.close();
+          dataConnectionRef.current.get(call.peer)?.close();
+        }
+      });
+    return participants;
+  };
+
+  const triggerIncoming = async (participant) => {
+    if (activeCallRef.current || incomingCallRef.current || pendingIncomingRoomRef.current) return;
+    pendingIncomingRoomRef.current = participant.room_id;
+
+    try {
+      const { data: room, error: roomError } = await supabase
+        .from('call_rooms')
+        .select('id, created_by, status')
+        .eq('id', participant.room_id)
+        .eq('status', 'active')
+        .maybeSingle();
+      if (roomError) throw roomError;
+      if (!room) {
+        const { error } = await supabase
+          .from('call_participants')
+          .update({ status: 'left' })
+          .eq('room_id', participant.room_id)
+          .eq('user_id', user.id)
+          .eq('status', 'invited');
+        if (error) console.error('[Call] Failed to clear expired invitation:', error);
+        return;
+      }
+
+      const { data: caller, error: callerError } = await supabase
+        .from('users')
+        .select('id, username, display_name, avatar_url')
+        .eq('id', participant.invited_by || room.created_by)
+        .maybeSingle();
+      if (callerError) throw callerError;
+
+      const incoming = {
+        callId: room.id,
+        roomId: room.id,
+        callerId: caller?.id || room.created_by,
+        callerName: caller?.display_name || caller?.username || 'Friend',
+        caller,
+      };
+      incomingCallRef.current = incoming;
+      dbCallIdRef.current = room.id;
+      setIncomingCall(incoming);
+    } catch (error) {
+      console.error('[Call] Failed to prepare incoming call:', error);
+    } finally {
+      pendingIncomingRoomRef.current = null;
+    }
+  };
+
   // ─────────────────────────────────────────────────────
-  // 2. Watch Supabase calls table
+  // 2. Watch incoming room invitations
   // ─────────────────────────────────────────────────────
   useEffect(() => {
     if (!user?.id) return;
 
     const checkForIncoming = async () => {
-      // 1. فحص المكالمات الواردة
-      if (!activeCallRef.current) {
-        const { data } = await supabase
-          .from('calls')
-          .select('*')
-          .eq('receiver_id', user.id)
-          .eq('status', 'calling')
-          .order('created_at', { ascending: false })
-          .limit(1);
-
-        if (data?.[0]) triggerIncoming(data[0]);
+      if (activeCallRef.current || incomingCallRef.current) return;
+      const { data, error } = await supabase
+        .from('call_participants')
+        .select('room_id, invited_by')
+        .eq('user_id', user.id)
+        .eq('status', 'invited')
+        .order('created_at', { ascending: false })
+        .limit(1);
+      if (error) {
+        console.error('[Call] Failed to check incoming calls:', error);
+        return;
       }
-
-      // 2. فحص ما إذا تم قبول المكالمة من الطرف الآخر (للمتصل)
-      if (dbCallIdRef.current && callStatusRef.current === 'calling') {
-        const { data: currentCall } = await supabase
-          .from('calls')
-          .select('status')
-          .eq('id', dbCallIdRef.current)
-          .single();
-
-        if (currentCall?.status === 'accepted') {
-          console.log('[VoiceContext] Callee accepted call via polling check');
-          setCallStatus('connected');
-        } else if (currentCall && ['ended', 'rejected'].includes(currentCall.status)) {
-          endCallCleanup(false);
-        }
-      }
+      if (data?.[0]) await triggerIncoming(data[0]);
     };
 
     checkForIncoming();
-    const poll = setInterval(checkForIncoming, 2000);
-
+    const poll = setInterval(checkForIncoming, 2500);
     const ch = supabase
-      .channel(`calls-watch-${user.id}`)
-      .on('postgres_changes',
-        { event: 'INSERT', schema: 'public', table: 'calls', filter: `receiver_id=eq.${user.id}` },
-        ({ new: rec }) => {
-          if (rec?.status === 'calling' && !activeCallRef.current) triggerIncoming(rec);
-        }
-      )
-      .on('postgres_changes',
-        { event: 'UPDATE', schema: 'public', table: 'calls' },
-        ({ new: rec }) => {
-          if (rec?.id === dbCallIdRef.current) {
-            if (rec.status === 'accepted') {
-              console.log('[VoiceContext] Callee accepted call via DB event');
-              setCallStatus('connected');
-            } else if (['ended', 'rejected'].includes(rec.status)) {
-              endCallCleanup(false);
-            }
-          }
-        }
-      )
+      .channel(`call-invitations-${user.id}`)
+      .on('postgres_changes', {
+        event: 'INSERT',
+        schema: 'public',
+        table: 'call_participants',
+        filter: `user_id=eq.${user.id}`,
+      }, (payload) => {
+        if (payload.new?.status === 'invited') triggerIncoming(payload.new);
+      })
       .subscribe();
 
-    return () => { clearInterval(poll); supabase.removeChannel(ch); };
+    return () => {
+      clearInterval(poll);
+      supabase.removeChannel(ch);
+    };
   }, [user?.id]);
 
-  const triggerIncoming = (rec) => {
-    // منع التكرار
-    if (dbCallIdRef.current === rec.id) return;
-    dbCallIdRef.current = rec.id;
-    setIncomingCall({
-      callId:     rec.id,
-      callerId:   rec.caller_id,
-      callerName: rec.caller_name || 'Friend'
-    });
-  };
+  // ─────────────────────────────────────────────────────
+  // 3. Synchronize room members and media state
+  // ─────────────────────────────────────────────────────
+  useEffect(() => {
+    const roomId = activeCall?.roomId;
+    if (!roomId || !user?.id) return;
+
+    const refreshTimer = window.setTimeout(() => refreshCallParticipants(roomId), 0);
+    const ch = supabase
+      .channel(`call-room-${roomId}`)
+      .on('postgres_changes', {
+        event: '*',
+        schema: 'public',
+        table: 'call_participants',
+        filter: `room_id=eq.${roomId}`,
+      }, () => refreshCallParticipants(roomId))
+      .on('postgres_changes', {
+        event: 'UPDATE',
+        schema: 'public',
+        table: 'call_rooms',
+        filter: `id=eq.${roomId}`,
+      }, ({ new: room }) => {
+        if (room?.status === 'ended') endCallCleanupRef.current?.(false);
+      })
+      .subscribe();
+
+    return () => {
+      window.clearTimeout(refreshTimer);
+      supabase.removeChannel(ch);
+    };
+  }, [activeCall?.roomId, user?.id]);
+
+  useEffect(() => {
+    const roomId = incomingCall?.roomId;
+    if (!roomId) return undefined;
+    const ch = supabase
+      .channel(`incoming-call-room-${roomId}`)
+      .on('postgres_changes', {
+        event: 'UPDATE',
+        schema: 'public',
+        table: 'call_rooms',
+        filter: `id=eq.${roomId}`,
+      }, ({ new: room }) => {
+        if (room?.status === 'ended') endCallCleanupRef.current?.(true);
+      })
+      .subscribe();
+    return () => { supabase.removeChannel(ch); };
+  }, [incomingCall?.roomId]);
 
   // ─────────────────────────────────────────────────────
-  // 3. Start Call (المتصل)
+  // 4. Start a direct call; participants can invite others after joining
   // ─────────────────────────────────────────────────────
   const startCall = async (friend, isVideo = false) => {
-    if (!friend?.id) return;
+    if (!friend?.id || !user?.id) return;
+    if (activeCallRef.current || incomingCallRef.current) {
+      toast.warning('You are already in a call.');
+      return;
+    }
     if (!peerRef.current || !peerReady) {
       toast.warning('Connecting to voice server, please wait a moment...');
       return;
@@ -582,131 +899,235 @@ export const VoiceProvider = ({ children }) => {
       const stream = await acquireMediaStream();
       localStreamRef.current = stream;
 
-      // سجّل في DB
-      const { data: rec } = await supabase
-        .from('calls')
-        .insert([{
-          caller_id:   user.id,
-          receiver_id: friend.id,
-          caller_name: user.display_name || user.username || 'User',
-          status:      'calling'
-        }])
-        .select().single();
+      const { data: room, error: roomError } = await supabase
+        .from('call_rooms')
+        .insert([{ created_by: user.id }])
+        .select('id')
+        .single();
+      if (roomError || !room) throw roomError || new Error('The call room was not created.');
 
-      if (rec) dbCallIdRef.current = rec.id;
+      const { error: participantError } = await supabase
+        .from('call_participants')
+        .insert([
+          {
+            room_id: room.id,
+            user_id: user.id,
+            invited_by: user.id,
+            status: 'active',
+            noise_suppression_enabled: noiseSuppressionActiveRef.current,
+            joined_at: new Date().toISOString(),
+          },
+          {
+            room_id: room.id,
+            user_id: friend.id,
+            invited_by: user.id,
+            status: 'invited',
+          },
+        ]);
+      if (participantError) {
+          const { error: endRoomError } = await supabase
+            .from('call_rooms')
+            .update({ status: 'ended' })
+            .eq('id', room.id);
+          if (endRoomError) console.error('[startCall] Failed to close incomplete room:', endRoomError);
+          throw participantError;
+        }
 
-      // اتصل بالطرف الثاني عبر PeerJS
-      const targetId = friend.id.replace(/-/g, '');
-      console.log('[startCall] calling peer:', targetId);
-      const call = peerRef.current.call(targetId, stream);
-      peerCallRef.current = call;
-      setupCallListeners(call);
-
-      try {
-        const conn = peerRef.current.connect(targetId);
-        setupDataConnection(conn);
-      } catch (e) {
-        console.warn('[startCall] data conn error:', e);
-      }
-
+      dbCallIdRef.current = room.id;
+      localMembershipActiveRef.current = true;
+      const participants = [
+        { user_id: user.id, status: 'active', noise_suppression_enabled: noiseSuppressionActiveRef.current, user },
+        { user_id: friend.id, status: 'invited', noise_suppression_enabled: true, user: friend },
+      ];
+      callParticipantsRef.current = participants;
+      setCallParticipants(participants);
+      const callState = { roomId: room.id, callId: room.id, friend, isVideo, participants };
+      activeCallRef.current = callState;
+      setActiveCall(callState);
       setIsMuted(false);
       setIsDeafened(false);
-      setCallStatus('calling'); // بيرن — لحد ما الطرف التاني يرد ويوصل stream
-      setActiveCall({ friend, isVideo, callId: rec?.id });
+      setCallStatus('calling');
     } catch (err) {
       console.error('[startCall] error:', err);
+      if (localStreamRef.current) {
+        localStreamRef.current.getTracks().forEach((track) => track.stop());
+        localStreamRef.current = null;
+      }
+      rawMicStreamRef.current?.getTracks().forEach((track) => track.stop());
+      rawMicStreamRef.current = null;
+      denoiseCleanupRef.current?.();
+      denoiseCleanupRef.current = null;
+      toast.error(microphoneErrorMessage(err) || 'Could not start the call. Please try again.');
     }
   };
 
   // ─────────────────────────────────────────────────────
-  // 4. Answer Call (المستقبِل)
+  // 5. Answer an incoming room invitation
   // ─────────────────────────────────────────────────────
   const answerCall = async () => {
-    const inc = incomingCall;
+    const inc = incomingCallRef.current;
     if (!inc) return;
+    let acceptedMembership = false;
 
     try {
+      const { data: room, error: roomError } = await supabase
+        .from('call_rooms')
+        .select('id, status')
+        .eq('id', inc.roomId)
+        .maybeSingle();
+      if (roomError) throw roomError;
+      if (room?.status !== 'active') {
+        toast.warning('This call has already ended.');
+        endCallCleanup(false);
+        return;
+      }
+
       const stream = await acquireMediaStream();
       localStreamRef.current = stream;
+      const { data: membership, error } = await supabase
+        .from('call_participants')
+        .update({
+          status: 'active',
+          noise_suppression_enabled: noiseSuppressionActiveRef.current,
+          joined_at: new Date().toISOString(),
+        })
+        .eq('room_id', inc.roomId)
+        .eq('user_id', user.id)
+        .eq('status', 'invited')
+        .select('user_id')
+        .maybeSingle();
+      if (error) throw error;
+      if (!membership) throw new Error('This call invitation is no longer active.');
+      acceptedMembership = true;
 
-      const doAnswer = (call) => {
-        peerCallRef.current = call;
-        pendingCallRef.current = null;
-        call.answer(stream);
-        setupCallListeners(call);
-        console.log('[answerCall] answered ✓');
-      };
-
-      if (pendingCallRef.current) {
-        // PeerJS call وصلت مسبقاً
-        doAnswer(pendingCallRef.current);
-      } else {
-        // PeerJS call لسه مجاش → استنّى حتى 8 ثواني
-        console.log('[answerCall] waiting for PeerJS call...');
-        let waited = 0;
-        const wait = setInterval(() => {
-          waited += 200;
-          if (pendingCallRef.current) {
-            clearInterval(wait);
-            doAnswer(pendingCallRef.current);
-          } else if (waited >= 8000) {
-            clearInterval(wait);
-            console.warn('[answerCall] timeout waiting for PeerJS call');
-          }
-        }, 200);
-      }
-
-      // حدّث DB
-      await supabase.from('calls').update({ status: 'accepted' }).eq('id', inc.callId);
-
-      try {
-        const callerTargetId = inc.callerId.replace(/-/g, '');
-        const conn = peerRef.current.connect(callerTargetId);
-        setupDataConnection(conn);
-      } catch (e) {
-        console.warn('[answerCall] data conn error:', e);
-      }
-
+      dbCallIdRef.current = inc.roomId;
+      localMembershipActiveRef.current = true;
+      const participants = await refreshCallParticipants(inc.roomId);
+      if (participants.length === 0) throw new Error('Could not load members of the call.');
       setIsMuted(false);
       setIsDeafened(false);
-      setCallStatus('connected'); // المستقبِل يبدأ connected مباشرة
-      setActiveCall({
-        friend: { id: inc.callerId, display_name: inc.callerName, username: inc.callerName },
+      setCallStatus('connected');
+      const callState = {
+        roomId: inc.roomId,
+        callId: inc.roomId,
+        friend: inc.caller,
         isVideo: false,
-        callId: inc.callId
-      });
+        participants,
+      };
+      activeCallRef.current = callState;
+      setActiveCall(callState);
+      incomingCallRef.current = null;
       setIncomingCall(null);
+      syncPeerCalls(participants);
     } catch (err) {
       console.error('[answerCall] error:', err);
+      localMembershipActiveRef.current = false;
+      toast.error(microphoneErrorMessage(err) || 'Could not join the call. Please try again.');
+      if (acceptedMembership) {
+        try {
+          const { error } = await supabase
+            .from('call_participants')
+            .update({ status: 'left' })
+            .eq('room_id', inc.roomId)
+            .eq('user_id', user.id);
+          if (error) console.error('[answerCall] Failed to roll back membership:', error);
+        } catch (rollbackError) {
+          console.error('[answerCall] Membership rollback failed:', rollbackError);
+        }
+        incomingCallRef.current = null;
+        dbCallIdRef.current = null;
+        setIncomingCall(null);
+      }
+      if (localStreamRef.current) {
+        localStreamRef.current.getTracks().forEach((track) => track.stop());
+        localStreamRef.current = null;
+      }
+      rawMicStreamRef.current?.getTracks().forEach((track) => track.stop());
+      rawMicStreamRef.current = null;
+      denoiseCleanupRef.current?.();
+      denoiseCleanupRef.current = null;
     }
+  };
+
+  const inviteParticipants = async (friendsToInvite) => {
+    const roomId = activeCallRef.current?.roomId;
+    if (!roomId || !Array.isArray(friendsToInvite) || friendsToInvite.length === 0) return;
+
+    const existingIds = new Set(callParticipantsRef.current
+      .filter((participant) => ['active', 'invited'].includes(participant.status))
+      .map((participant) => participant.user_id));
+    const newFriends = friendsToInvite.filter((friend) => friend?.id && !existingIds.has(friend.id));
+    if (newFriends.length === 0) {
+      toast.info('Those friends are already in this call or invited.');
+      return;
+    }
+
+    const { error } = await supabase
+      .from('call_participants')
+      .upsert(newFriends.map((friend) => ({
+        room_id: roomId,
+        user_id: friend.id,
+        invited_by: user.id,
+        status: 'invited',
+        noise_suppression_enabled: false,
+        created_at: new Date().toISOString(),
+      })), { onConflict: 'room_id,user_id' });
+    if (error) {
+      console.error('[Call] Failed to invite participants:', error);
+      toast.error('Could not invite those friends.');
+      return;
+    }
+
+    await refreshCallParticipants(roomId);
+    toast.success(`Invited ${newFriends.length} friend${newFriends.length === 1 ? '' : 's'}.`);
   };
 
   // ─────────────────────────────────────────────────────
   // 5. End Call — الدالة الرئيسية لإنهاء المكالمة
   // ─────────────────────────────────────────────────────
   const endCallCleanup = (updateDb = true) => {
-    console.log('[endCall] cleaning up, updateDb =', updateDb);
+    const roomId = dbCallIdRef.current;
+    const wasIncoming = !!incomingCallRef.current && !activeCallRef.current;
+    console.log('[endCall] leaving room:', roomId);
 
-    const recId = dbCallIdRef.current;
+    if (updateDb && roomId && user?.id) {
+      (async () => {
+        const status = wasIncoming ? 'declined' : 'left';
+        const { error: leaveError } = await supabase
+          .from('call_participants')
+          .update({ status })
+          .eq('room_id', roomId)
+          .eq('user_id', user.id)
+          .in('status', ['active', 'invited']);
+        if (leaveError) {
+          console.error('[endCall] Failed to update participant status:', leaveError);
+          toast.error('Could not update your call status.');
+          return;
+        }
 
-    // 1. تحديث قاعدة البيانات بأمان تام بدون أي أخطاء توقف الكود
-    if (updateDb && recId) {
-      try {
-        supabase
-          .from('calls')
-          .update({ status: 'ended' })
-          .eq('id', recId)
-          .then(() => {
-            console.log('[endCall] DB status updated to ended');
-          }, (err) => {
-            console.warn('[endCall] DB update error ignored:', err);
-          });
-      } catch (err) {
-        console.warn('[endCall] Supabase call failed:', err);
-      }
+        if (!wasIncoming) {
+          const { data: activeMembers, error: membersError } = await supabase
+            .from('call_participants')
+            .select('user_id')
+            .eq('room_id', roomId)
+            .eq('status', 'active');
+          if (membersError) {
+            console.error('[endCall] Failed to check active participants:', membersError);
+            return;
+          }
+          if (activeMembers.length === 0) {
+            const { error: roomError } = await supabase
+              .from('call_rooms')
+              .update({ status: 'ended' })
+              .eq('id', roomId);
+            if (roomError) console.error('[endCall] Failed to end empty room:', roomError);
+          }
+        }
+      })().catch((err) => {
+        console.error('[endCall] Failed to update call room:', err);
+      });
     }
 
-    // 2. إيقاف جميع مسارات الصوت والشاشة فوراً
     try {
       if (denoiseCleanupRef.current) {
         denoiseCleanupRef.current();
@@ -744,28 +1165,26 @@ export const VoiceProvider = ({ children }) => {
     localStreamRef.current  = null;
     screenStreamRef.current = null;
 
-    // 3. إغلاق اتصال PeerJS بأمان
-    try {
-      if (peerCallRef.current) {
-        peerCallRef.current.close();
-      }
-    } catch (e) {
-      console.warn('[endCall] error closing peerCall:', e);
-    }
-    peerCallRef.current    = null;
-    pendingCallRef.current = null;
-    if (dataConnectionRef.current) {
-      try { dataConnectionRef.current.close(); } catch {}
-      dataConnectionRef.current = null;
-    }
+    peerCallsRef.current.forEach((call) => {
+      try { call.close(); } catch (e) { console.warn('[endCall] PeerJS close warning:', e); }
+    });
+    peerCallsRef.current.clear();
+    peerCallRef.current = null;
+    pendingCallRef.current.forEach((call) => {
+      try { call.close(); } catch (e) { console.warn('[endCall] pending call close warning:', e); }
+    });
+    pendingCallRef.current.clear();
+    dataConnectionRef.current.forEach((connection) => {
+      try { connection.close(); } catch (e) { console.warn('[endCall] data connection close warning:', e); }
+    });
+    dataConnectionRef.current.clear();
 
-    // 4. تصفير عناصر الصوت والفيديو
-    try {
-      if (remoteAudioRef.current) {
-        remoteAudioRef.current.pause();
-        remoteAudioRef.current.srcObject = null;
-      }
-    } catch (e) {}
+    remoteAudioElementsRef.current.forEach((element) => {
+      element.pause();
+      element.srcObject = null;
+    });
+    remoteAudioElementsRef.current.clear();
+    remoteAudioRef.current = null;
 
     try {
       if (localVideoRef.current) localVideoRef.current.srcObject = null;
@@ -773,12 +1192,22 @@ export const VoiceProvider = ({ children }) => {
     } catch (e) {}
 
     remoteStreamRef.current = null;
-    dbCallIdRef.current     = null;
+    remoteStreamsRef.current = [];
+    dbCallIdRef.current = null;
+    localMembershipActiveRef.current = false;
+    activeCallRef.current = null;
+    incomingCallRef.current = null;
+    pendingIncomingRoomRef.current = null;
+    noiseSuppressionActiveRef.current = false;
+    setIsNoiseSuppressionActive(false);
 
     // 5. تصفير الـ state فوراً لغلق الشاشة
     stopDiscordRingtone();
     setActiveCall(null);
     setIncomingCall(null);
+    setCallParticipants([]);
+    callParticipantsRef.current = [];
+    setRemoteStreams([]);
     setCallStatus('idle');
     setIsMuted(false);
     setIsDeafened(false);
@@ -787,6 +1216,9 @@ export const VoiceProvider = ({ children }) => {
     setIsRemoteScreenSharing(false);
     setIsRemoteCamera(false);
   };
+  useEffect(() => {
+    endCallCleanupRef.current = endCallCleanup;
+  }, [endCallCleanup]);
 
   // نصدّر endCall كـ wrapper يقبل بدون argument أيضاً
   const endCall = (updateDb = true) => endCallCleanup(updateDb);
@@ -806,14 +1238,14 @@ export const VoiceProvider = ({ children }) => {
       }
 
       // 2. كتم/تشغيل في الـ WebRTC Senders مباشرة لضمان عدم وصول أي صوت للطرف الآخر
-      const pc = peerCallRef.current?.peerConnection;
-      if (pc) {
-        pc.getSenders().forEach(sender => {
+      getPeerCalls().forEach((call) => {
+        const pc = call.peerConnection;
+        if (pc) pc.getSenders().forEach(sender => {
           if (sender.track && sender.track.kind === 'audio') {
             sender.track.enabled = !next;
           }
         });
-      }
+      });
 
       console.log('[toggleMute] muted =', next);
       return next;
@@ -828,17 +1260,17 @@ export const VoiceProvider = ({ children }) => {
       const next = !prev;
 
       // 1. كتم عنصر الصوت
-      if (remoteAudioRef.current) {
-        remoteAudioRef.current.muted = next;
-        remoteAudioRef.current.volume = next ? 0 : 1;
-      }
+      remoteAudioElementsRef.current.forEach((element) => {
+        element.muted = next;
+        element.volume = next ? 0 : 1;
+      });
 
       // 2. كتم مسارات الصوت الواردة نفسها لضمان عدم خروج أي صوت
-      if (remoteStreamRef.current) {
-        remoteStreamRef.current.getAudioTracks().forEach(t => {
+      remoteStreamsRef.current.forEach(({ stream }) => {
+        stream.getAudioTracks().forEach(t => {
           t.enabled = !next;
         });
-      }
+      });
 
       // 3. لو deafen -> اكتم المايك تلقائياً زي ديسكورد
       if (next) {
@@ -846,14 +1278,14 @@ export const VoiceProvider = ({ children }) => {
         if (localStreamRef.current) {
           localStreamRef.current.getAudioTracks().forEach(t => { t.enabled = false; });
         }
-        const pc = peerCallRef.current?.peerConnection;
-        if (pc) {
-          pc.getSenders().forEach(sender => {
+        getPeerCalls().forEach((call) => {
+          const pc = call.peerConnection;
+          if (pc) pc.getSenders().forEach(sender => {
             if (sender.track && sender.track.kind === 'audio') {
               sender.track.enabled = false;
             }
           });
-        }
+        });
       }
 
       console.log('[toggleDeafen] deafened =', next);
@@ -873,11 +1305,7 @@ export const VoiceProvider = ({ children }) => {
         localStreamRef.current.addTrack(blankTrack);
       }
 
-      const pc = peerCallRef.current?.peerConnection;
-      if (pc && blankTrack) {
-        const videoSender = pc.getSenders().find(s => s.track?.kind === 'video') || pc.getTransceivers?.().find(t => t.receiver?.track?.kind === 'video')?.sender;
-        if (videoSender) videoSender.replaceTrack(blankTrack);
-      }
+      if (blankTrack) await replacePeerTrack('video', blankTrack);
 
       if (localVideoRef.current) localVideoRef.current.srcObject = null;
       setIsVideoEnabled(false);
@@ -899,13 +1327,7 @@ export const VoiceProvider = ({ children }) => {
         }
 
         // استبدال في WebRTC sender فورياً ليظهر عند الطرف الآخر
-        const pc = peerCallRef.current?.peerConnection;
-        if (pc) {
-          const videoSender = pc.getSenders().find(s => s.track?.kind === 'video') || pc.getTransceivers?.().find(t => t.receiver?.track?.kind === 'video')?.sender;
-          if (videoSender) {
-            videoSender.replaceTrack(vTrack);
-          }
-        }
+        await replacePeerTrack('video', vTrack);
 
         setIsVideoEnabled(true);
         sendMediaSignal({ type: 'camera', enabled: true });
@@ -926,17 +1348,7 @@ export const VoiceProvider = ({ children }) => {
       // 1. أولاً: استبدال المسار في الـ PeerConnection بمسار خامل *قبل* إيقاف مسار الشاشة
       //    لأن إيقاف المسار وهو لسه في الـ sender ممكن يسبب ICE failure ويقفل الكول
       const blankTrack = createBlankVideoTrack();
-      const pc = peerCallRef.current?.peerConnection;
-      if (pc && blankTrack) {
-        const videoSender = pc.getSenders().find(s => s.track?.kind === 'video') || pc.getTransceivers?.().find(t => t.receiver?.track?.kind === 'video')?.sender;
-        if (videoSender) {
-          try {
-            await videoSender.replaceTrack(blankTrack);
-          } catch (e) {
-            console.warn('[toggleScreenShare] replaceTrack error:', e);
-          }
-        }
-      }
+      if (blankTrack) await replacePeerTrack('video', blankTrack);
 
       // 2. ثانياً: إزالة الـ onended handler لمنع التضارب مع الكود ده
       if (screenStreamRef.current) {
@@ -963,17 +1375,7 @@ export const VoiceProvider = ({ children }) => {
         const sTrack = ss.getVideoTracks()[0];
 
         // 1. استبدال المسار فورياً في الـ WebRTC Video Sender ليظهر عند الطرف الآخر فوراً!
-        const pc = peerCallRef.current?.peerConnection;
-        if (pc) {
-          const videoSender = pc.getSenders().find(s => s.track?.kind === 'video') || pc.getTransceivers?.().find(t => t.receiver?.track?.kind === 'video')?.sender;
-          if (videoSender) {
-            console.log('[ScreenShare] replacing video track in sender ✓');
-            await videoSender.replaceTrack(sTrack);
-          } else {
-            console.log('[ScreenShare] no video sender, adding track');
-            pc.addTrack(sTrack, ss);
-          }
-        }
+        await replacePeerTrack('video', sTrack);
 
         // 2. ربط الـ stream محلياً فوراً ليظهر عندك أنت أيضاً
         if (localVideoRef.current) {
@@ -995,17 +1397,7 @@ export const VoiceProvider = ({ children }) => {
         sTrack.onended = async () => {
           // 1. أولاً: استبدال المسار في الـ sender بمسار خامل *قبل* أي حاجة تانية
           const blankTrack = createBlankVideoTrack();
-          const currentPc = peerCallRef.current?.peerConnection;
-          if (currentPc && blankTrack) {
-            const videoSender = currentPc.getSenders().find(s => s.track?.kind === 'video') || currentPc.getTransceivers?.().find(t => t.receiver?.track?.kind === 'video')?.sender;
-            if (videoSender) {
-              try {
-                await videoSender.replaceTrack(blankTrack);
-              } catch (e) {
-                console.warn('[ScreenShare onended] replaceTrack error:', e);
-              }
-            }
-          }
+          if (blankTrack) await replacePeerTrack('video', blankTrack);
 
           // 2. تنظيف الحالة
           screenStreamRef.current = null;
@@ -1030,7 +1422,7 @@ export const VoiceProvider = ({ children }) => {
   const toggleNoiseSuppression = async () => {
     const nextVal = !isNoiseSuppressionEnabled;
     setIsNoiseSuppressionEnabled(nextVal);
-    toast.info(nextVal ? 'Noise Suppression (RNNoise) Enabled' : 'Noise Suppression Disabled');
+    toast.info(nextVal ? 'AI Noise Suppression enabled' : 'AI Noise Suppression disabled');
 
     if (activeCall && rawMicStreamRef.current && localStreamRef.current) {
       try {
@@ -1041,11 +1433,18 @@ export const VoiceProvider = ({ children }) => {
 
         let finalAudioTrack;
         if (nextVal) {
-          const { cleanStream, cleanup } = await applyRnnoiseDenoise(rawMicStreamRef.current);
+          const { cleanStream, cleanup, isActive } = await applyRnnoiseDenoise(rawMicStreamRef.current);
           denoiseCleanupRef.current = cleanup;
           finalAudioTrack = cleanStream.getAudioTracks()[0] || rawMicStreamRef.current.getAudioTracks()[0];
+          noiseSuppressionActiveRef.current = isActive;
+          setIsNoiseSuppressionActive(isActive);
+          if (!isActive) {
+            toast.warning('AI noise suppression could not start; microphone noise reduction remains enabled.');
+          }
         } else {
           finalAudioTrack = rawMicStreamRef.current.getAudioTracks()[0];
+          noiseSuppressionActiveRef.current = false;
+          setIsNoiseSuppressionActive(false);
         }
 
         if (finalAudioTrack) {
@@ -1058,16 +1457,28 @@ export const VoiceProvider = ({ children }) => {
             localStreamRef.current.addTrack(finalAudioTrack);
           }
 
-          const pc = peerCallRef.current?.peerConnection;
-          if (pc) {
-            const audioSender = pc.getSenders().find(s => s.track?.kind === 'audio') || pc.getTransceivers?.().find(t => t.receiver?.track?.kind === 'audio')?.sender;
-            if (audioSender) {
-              await audioSender.replaceTrack(finalAudioTrack);
-            }
+          await replacePeerTrack('audio', finalAudioTrack);
+
+          const { error } = await supabase
+            .from('call_participants')
+            .update({ noise_suppression_enabled: noiseSuppressionActiveRef.current })
+            .eq('room_id', activeCall.roomId)
+            .eq('user_id', user.id);
+          if (error) {
+            console.error('[toggleNoiseSuppression] Failed to update status:', error);
+            toast.error('Could not update noise-suppression status for the call.');
           }
+          const updatedParticipants = callParticipantsRef.current.map((participant) => (
+            participant.user_id === user.id
+              ? { ...participant, noise_suppression_enabled: noiseSuppressionActiveRef.current }
+              : participant
+          ));
+          callParticipantsRef.current = updatedParticipants;
+          setCallParticipants(updatedParticipants);
         }
       } catch (err) {
-        console.warn('[toggleNoiseSuppression] live switch warning:', err);
+        console.error('[toggleNoiseSuppression] live switch failed:', err);
+        toast.error('Could not change noise suppression for the live call.');
       }
     }
   };
@@ -1079,6 +1490,8 @@ export const VoiceProvider = ({ children }) => {
     <VoiceContext.Provider value={{
       peerReady,
       activeCall,
+      callParticipants,
+      remoteStreams,
       incomingCall,
       callStatus,
       isMuted,
@@ -1088,6 +1501,7 @@ export const VoiceProvider = ({ children }) => {
       isRemoteScreenSharing,
       isRemoteCamera,
       isNoiseSuppressionEnabled,
+      isNoiseSuppressionActive,
       toggleNoiseSuppression,
       microphones,
       speakers,
@@ -1099,10 +1513,12 @@ export const VoiceProvider = ({ children }) => {
       localVideoRef,
       remoteVideoRef,
       remoteAudioRef,
+      remoteAudioElementsRef,
       remoteStreamRef,
       localStreamRef,
       screenStreamRef,
       startCall,
+      inviteParticipants,
       answerCall,
       endCall,
       toggleMute,

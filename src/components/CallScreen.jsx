@@ -18,9 +18,14 @@ import { useVoice } from '../context/VoiceContext';
 import { useAuth } from '../context/AuthContext';
 import { useToast } from '../context/ToastContext';
 
+const BACKEND_URL = import.meta.env.VITE_BACKEND_URL || 'http://localhost:5000/api';
+
 export default function CallScreen() {
   const {
     activeCall,
+    callParticipants,
+    remoteStreams,
+    remoteAudioElementsRef,
     callStatus,      // 'calling' | 'connected'
     isMuted,
     isDeafened,
@@ -40,6 +45,7 @@ export default function CallScreen() {
     toggleCamera,
     toggleScreenShare,
     isNoiseSuppressionEnabled,
+    isNoiseSuppressionActive,
     toggleNoiseSuppression,
     microphones,
     speakers,
@@ -47,9 +53,10 @@ export default function CallScreen() {
     selectedSpeaker,
     changeMicrophone,
     changeSpeaker,
+    inviteParticipants,
   } = useVoice();
 
-  const { user: currentUser } = useAuth();
+  const { user: currentUser, token } = useAuth();
   const toast = useToast();
   const containerRef = useRef(null);
   const startTimeRef = useRef(0);
@@ -57,6 +64,10 @@ export default function CallScreen() {
   const [showSoundboard, setShowSoundboard] = useState(false);
   const [showMicMenu, setShowMicMenu] = useState(false);
   const [showSpeakerMenu, setShowSpeakerMenu] = useState(false);
+  const [showInviteModal, setShowInviteModal] = useState(false);
+  const [friends, setFriends] = useState([]);
+  const [selectedInviteIds, setSelectedInviteIds] = useState([]);
+  const [loadingFriends, setLoadingFriends] = useState(false);
 
   const micMenuRef = useRef(null);
   const speakerMenuRef = useRef(null);
@@ -98,6 +109,21 @@ export default function CallScreen() {
     }
   }, [callStatus, isRemoteScreenSharing, isRemoteCamera, remoteVideoRef, remoteStreamRef]);
 
+  useEffect(() => {
+    remoteStreams.forEach(({ userId, stream }) => {
+      const element = remoteAudioElementsRef.current.get(userId);
+      if (!element) return;
+      if (element.srcObject !== stream) element.srcObject = stream;
+      element.muted = isDeafened;
+      element.volume = isDeafened ? 0 : 1;
+      if (typeof element.setSinkId === 'function') {
+        element.setSinkId(selectedSpeaker === 'default' ? '' : selectedSpeaker)
+          .catch((error) => console.warn('[Audio] Could not set output device:', error));
+      }
+      element.play().catch((error) => console.warn('[Audio] play blocked:', error));
+    });
+  }, [remoteStreams, isDeafened, remoteAudioElementsRef, selectedSpeaker]);
+
   // عداد مدة المكالمة
   useEffect(() => {
     if (callStatus !== 'connected') {
@@ -130,30 +156,82 @@ export default function CallScreen() {
   const isCalling   = callStatus === 'calling';
 
   const friendName = activeCall.friend?.display_name || activeCall.friend?.username || 'Friend';
-  const friendUser = activeCall.friend?.username || 'user';
   const myName     = currentUser?.display_name || currentUser?.username || 'Me';
   const myUser     = currentUser?.username || 'me';
 
   const showRemoteCamera   = (isRemoteCamera || activeCall.isVideo) && isConnected;
   const showLocalCamera    = isVideoEnabled;
   const isVideoCallActive  = showRemoteCamera || showLocalCamera;
+  const activeParticipantIds = new Set(callParticipants
+    .filter((participant) => ['active', 'invited'].includes(participant.status))
+    .map((participant) => participant.user_id));
+  const inviteableFriends = friends.filter((friend) => !activeParticipantIds.has(friend.id));
+  const selectedFriends = friends.filter((friend) => selectedInviteIds.includes(friend.id));
+
+  const openInviteModal = async () => {
+    setSelectedInviteIds([]);
+    setShowInviteModal(true);
+    if (!token) {
+      toast.error('You need to sign in to invite friends.');
+      return;
+    }
+
+    setLoadingFriends(true);
+    try {
+      const response = await fetch(`${BACKEND_URL}/friends`, {
+        headers: { Authorization: `Bearer ${token}` },
+      });
+      if (!response.ok) throw new Error(`Friends request failed (${response.status}).`);
+      const data = await response.json();
+      setFriends(data.friends || []);
+    } catch (error) {
+      console.error('[CallScreen] Failed to load friends for invite:', error);
+      toast.error('Could not load your friends.');
+    } finally {
+      setLoadingFriends(false);
+    }
+  };
+
+  const handleInvite = async () => {
+    await inviteParticipants(selectedFriends);
+    setShowInviteModal(false);
+    setSelectedInviteIds([]);
+  };
 
   return (
     <div ref={containerRef} className="flex-1 flex flex-col bg-[#000000] h-full overflow-hidden select-none relative font-sans">
 
       {/* REMOTE AUDIO */}
-      <audio
-        ref={remoteAudioRef}
-        autoPlay
-        playsInline
-        style={{ position: 'fixed', width: 0, height: 0, opacity: 0, zIndex: -1 }}
-      />
+      <div className="hidden" aria-hidden="true">
+        {remoteStreams.map(({ userId }) => (
+          <audio
+            key={userId}
+            autoPlay
+            playsInline
+            ref={(element) => {
+              if (element) {
+                remoteAudioElementsRef.current.set(userId, element);
+                if (!remoteAudioRef.current) remoteAudioRef.current = element;
+              } else {
+                const removedElement = remoteAudioElementsRef.current.get(userId);
+                remoteAudioElementsRef.current.delete(userId);
+                if (remoteAudioRef.current === removedElement) {
+                  remoteAudioRef.current = remoteAudioElementsRef.current.values().next().value || null;
+                }
+              }
+            }}
+          />
+        ))}
+      </div>
 
       {/* HEADER */}
       <div className="h-12 border-b border-[#18191c] px-4 flex items-center justify-between shrink-0 bg-[#000000] z-20">
         <div className="flex items-center gap-2 text-white font-bold text-sm">
           <Volume2 size={18} className="text-[#80848e]" />
           <span>Voice Call</span>
+          <span className="text-xs font-normal text-[#949ba4]">
+            {callParticipants.filter((participant) => participant.status === 'active').length} participants
+          </span>
           {isConnected && (
             <span className="text-xs text-[#23a55a] font-normal ml-2">● {fmt(callDuration)}</span>
           )}
@@ -318,55 +396,62 @@ export default function CallScreen() {
               <video ref={localVideoRef} autoPlay muted playsInline />
             </div>
 
-            <div className="flex flex-wrap items-center justify-center gap-8 w-full max-w-3xl">
-            {/* Friend Voice Card */}
-            <div className="w-64 h-72 bg-[#111214] border border-[#1e1f22] rounded-2xl flex flex-col items-center justify-center p-6 shadow-2xl relative transition-all hover:border-[#2b2d31]">
-              <div className={`w-28 h-28 rounded-full bg-[#1e1f22] border-4 flex items-center justify-center text-white text-3xl font-bold shadow-xl transition-all ${
-                isConnected ? 'border-[#23a55a] ring-4 ring-[#23a55a]/20' : 'border-[#f0b132] animate-pulse'
-              }`}>
-                {activeCall.friend?.avatar_url ? (
-                  <img src={activeCall.friend.avatar_url} alt={friendName} className="w-full h-full rounded-full object-cover" />
-                ) : (
-                  friendName.substring(0, 2).toUpperCase()
-                )}
-              </div>
-              <div className="mt-4 text-center">
-                <div className="text-white font-bold text-base truncate max-w-[200px]">{friendName}</div>
-                <div className="text-[#80848e] text-xs mt-0.5 truncate max-w-[200px]">@{friendUser}</div>
-                <div className={`text-xs mt-2.5 font-medium flex items-center justify-center gap-1.5 ${isConnected ? 'text-[#23a55a]' : 'text-[#f0b132]'}`}>
-                  <span className="w-2 h-2 rounded-full bg-current inline-block animate-pulse" />
-                  <span>{isCalling ? 'Ringing...' : 'Connected'}</span>
-                </div>
-              </div>
-              {isDeafened && (
-                <span className="absolute bottom-3 right-3 text-xs bg-black/80 px-2 py-1 rounded-md border border-[#1e1f22]">🔇 Deafened</span>
-              )}
-            </div>
+            <div className="flex flex-wrap items-center justify-center gap-5 w-full max-w-5xl">
+              {callParticipants.filter((participant) => participant.status === 'active').map((participant) => {
+                const isLocal = participant.user_id === currentUser?.id;
+                const participantUser = participant.user || {};
+                const participantName = isLocal
+                  ? myName
+                  : participantUser.display_name || participantUser.username || 'Friend';
+                const participantUsername = isLocal
+                  ? myUser
+                  : participantUser.username || 'user';
+                const muted = isLocal && isMuted;
+                const noiseActive = isLocal
+                  ? isNoiseSuppressionActive
+                  : participant.noise_suppression_enabled;
 
-            {/* Local Voice Card */}
-            <div className="w-64 h-72 bg-[#111214] border border-[#1e1f22] rounded-2xl flex flex-col items-center justify-center p-6 shadow-2xl relative transition-all hover:border-[#2b2d31]">
-              <div className={`w-28 h-28 rounded-full bg-[#1e1f22] border-4 flex items-center justify-center text-white text-3xl font-bold shadow-xl transition-all ${
-                isMuted ? 'border-[#f23f43]' : 'border-[#23a55a] ring-4 ring-[#23a55a]/20'
-              }`}>
-                {currentUser?.avatar_url ? (
-                  <img src={currentUser.avatar_url} alt={myName} className="w-full h-full rounded-full object-cover" />
-                ) : (
-                  myName.substring(0, 2).toUpperCase()
-                )}
-              </div>
-              <div className="mt-4 text-center">
-                <div className="text-white font-bold text-base truncate max-w-[200px]">{myName}</div>
-                <div className="text-[#80848e] text-xs mt-0.5 truncate max-w-[200px]">@{myUser}</div>
-                <div className="text-xs mt-2.5 text-[#80848e] font-medium flex items-center justify-center gap-1.5">
-                  <span className={`w-2 h-2 rounded-full inline-block ${isMuted ? 'bg-[#f23f43]' : 'bg-[#23a55a]'}`} />
-                  <span>{isMuted ? 'Muted' : 'Speaking'}</span>
-                </div>
-              </div>
-              {isMuted && (
-                <span className="absolute bottom-3 right-3 text-xs bg-black/80 px-2 py-1 rounded-md border border-[#1e1f22] text-[#f23f43]">🔇 Muted</span>
-              )}
+                return (
+                  <div key={participant.user_id} className="w-64 min-h-72 bg-[#111214] border border-[#1e1f22] rounded-2xl flex flex-col items-center justify-center p-6 shadow-2xl relative transition-all hover:border-[#2b2d31]">
+                    <div className={`w-28 h-28 rounded-full bg-[#1e1f22] border-4 flex items-center justify-center text-white text-3xl font-bold shadow-xl ${
+                      muted ? 'border-[#f23f43]' : 'border-[#23a55a] ring-4 ring-[#23a55a]/20'
+                    }`}>
+                      {participantUser.avatar_url ? (
+                        <img src={participantUser.avatar_url} alt={participantName} className="w-full h-full rounded-full object-cover" />
+                      ) : (
+                        participantName.substring(0, 2).toUpperCase()
+                      )}
+                    </div>
+                    <div className="mt-4 text-center">
+                      <div className="text-white font-bold text-base truncate max-w-[200px]">
+                        {participantName}{isLocal ? ' (You)' : ''}
+                      </div>
+                      <div className="text-[#80848e] text-xs mt-0.5 truncate max-w-[200px]">@{participantUsername}</div>
+                      <div className={`text-xs mt-2.5 font-medium ${muted ? 'text-[#f23f43]' : 'text-[#23a55a]'}`}>
+                        {muted ? 'Muted' : 'Connected'}
+                      </div>
+                      <div className={`text-[10px] mt-2 ${noiseActive ? 'text-[#23a55a]' : 'text-[#80848e]'}`}>
+                        {noiseActive ? 'AI noise suppression active' : 'Built-in noise suppression requested'}
+                      </div>
+                    </div>
+                    {isDeafened && !isLocal && (
+                      <span className="absolute bottom-3 right-3 text-xs bg-black/80 px-2 py-1 rounded-md border border-[#1e1f22]">🔇 Deafened</span>
+                    )}
+                    {muted && (
+                      <span className="absolute bottom-3 right-3 text-xs bg-black/80 px-2 py-1 rounded-md border border-[#1e1f22] text-[#f23f43]">🔇 Muted</span>
+                    )}
+                  </div>
+                );
+              })}
             </div>
-          </div>
+            {callParticipants.some((participant) => participant.status === 'invited') && (
+              <p className="absolute bottom-3 text-xs text-[#f0b132]">
+                Inviting: {callParticipants
+                  .filter((participant) => participant.status === 'invited')
+                  .map((participant) => participant.user?.display_name || participant.user?.username || 'Friend')
+                  .join(', ')}
+              </p>
+            )}
         </>
         )}
       </div>
@@ -377,14 +462,9 @@ export default function CallScreen() {
         {/* Left: Invite */}
         <div className="flex items-center">
           <button type="button"
-            onClick={() => {
-              if (navigator.clipboard) {
-                navigator.clipboard.writeText(window.location.href);
-              }
-              toast.success('Call link copied to clipboard!');
-            }}
+            onClick={openInviteModal}
             className="text-[#80848e] hover:text-white p-2 hover:bg-[#111214] rounded-lg transition cursor-pointer"
-            title="Invite"
+            title="Invite friends"
           >
             <UserPlus size={20} />
           </button>
@@ -542,7 +622,11 @@ export default function CallScreen() {
             className={`p-2.5 rounded-lg transition cursor-pointer ${
               isNoiseSuppressionEnabled ? 'text-[#23a55a] bg-[#23a55a]/20 hover:bg-[#23a55a]/30' : 'text-[#80848e] hover:text-white hover:bg-[#1e1f22]'
             }`}
-            title={isNoiseSuppressionEnabled ? 'Noise Suppression (RNNoise): Active' : 'Noise Suppression: Off'}
+            title={isNoiseSuppressionActive
+              ? 'AI Noise Suppression is processing your microphone'
+              : isNoiseSuppressionEnabled
+                ? 'AI Noise Suppression is enabled but not currently processing'
+                : 'AI Noise Suppression: Off'}
           >
             <Sparkles size={20} />
           </button>
@@ -599,6 +683,78 @@ export default function CallScreen() {
             <Maximize2 size={20} />
           </button>
         </div>
+        {showInviteModal && (
+          <div className="fixed inset-0 z-50 flex items-center justify-center bg-black/70 p-4">
+            <div className="w-full max-w-md rounded-xl border border-[#2b2d31] bg-[#111214] p-5 shadow-2xl">
+              <div className="mb-4 flex items-center justify-between">
+                <div>
+                  <h2 className="text-base font-bold text-white">Invite friends to call</h2>
+                  <p className="mt-1 text-xs text-[#949ba4]">Choose one or more friends to add to this voice room.</p>
+                </div>
+                <button
+                  type="button"
+                  onClick={() => setShowInviteModal(false)}
+                  className="rounded p-1 text-[#949ba4] hover:bg-[#2b2d31] hover:text-white"
+                  aria-label="Close invite dialog"
+                >
+                  ×
+                </button>
+              </div>
+              <div className="max-h-72 overflow-y-auto discord-scrollbar">
+                {loadingFriends ? (
+                  <p className="py-6 text-center text-sm text-[#949ba4]">Loading friends...</p>
+                ) : inviteableFriends.length === 0 ? (
+                  <p className="py-6 text-center text-sm text-[#949ba4]">No friends available to invite.</p>
+                ) : inviteableFriends.map((friend) => {
+                  const isSelected = selectedInviteIds.includes(friend.id);
+                  const displayName = friend.display_name || friend.username || 'Friend';
+                  return (
+                    <button
+                      key={friend.id}
+                      type="button"
+                      onClick={() => setSelectedInviteIds((previous) => (
+                        isSelected
+                          ? previous.filter((id) => id !== friend.id)
+                          : [...previous, friend.id]
+                      ))}
+                      className={`mb-1 flex w-full items-center gap-3 rounded-lg px-3 py-2 text-left transition ${
+                        isSelected ? 'bg-[#5865f2]/25 text-white' : 'text-[#dbdee1] hover:bg-[#1e1f22]'
+                      }`}
+                    >
+                      <span className="flex h-9 w-9 items-center justify-center overflow-hidden rounded-full bg-[#2b2d31] text-xs font-bold">
+                        {friend.avatar_url
+                          ? <img src={friend.avatar_url} alt="" className="h-full w-full object-cover" />
+                          : displayName.substring(0, 2).toUpperCase()}
+                      </span>
+                      <span className="min-w-0 flex-1">
+                        <span className="block truncate text-sm font-medium">{displayName}</span>
+                        <span className="block truncate text-xs text-[#949ba4]">@{friend.username || 'user'}</span>
+                      </span>
+                      <span className="text-sm">{isSelected ? '✓' : ''}</span>
+                    </button>
+                  );
+                })}
+              </div>
+              <div className="mt-5 flex justify-end gap-2">
+                <button
+                  type="button"
+                  onClick={() => setShowInviteModal(false)}
+                  className="rounded-lg px-3 py-2 text-sm text-[#dbdee1] hover:bg-[#2b2d31]"
+                >
+                  Cancel
+                </button>
+                <button
+                  type="button"
+                  onClick={handleInvite}
+                  disabled={selectedInviteIds.length === 0}
+                  className="rounded-lg bg-[#5865f2] px-4 py-2 text-sm font-semibold text-white hover:bg-[#4752c4] disabled:cursor-not-allowed disabled:opacity-50"
+                >
+                  Invite ({selectedInviteIds.length})
+                </button>
+              </div>
+            </div>
+          </div>
+        )}
       </div>
     </div>
   );

@@ -180,7 +180,7 @@ export default function SettingsPage({ onClose }) {
                       )}
                     </p>
                     <p className="text-xs text-[#949ba4] leading-relaxed">
-                      Filters background noise from your microphone and from incoming audio using a neural network (RNNoise) — applied on both ends of the call in real time.
+                      Processes your microphone before it is sent. Every participant applies noise suppression on their own device; incoming audio is not filtered a second time.
                     </p>
                   </div>
 
@@ -206,7 +206,7 @@ export default function SettingsPage({ onClose }) {
                   <Info size={14} className="text-[#5865f2] shrink-0 mt-0.5" />
                   <p className="text-[12px] text-[#949ba4] leading-relaxed">
                     Noise suppression uses <strong className="text-[#dbdee1]">RNNoise WASM</strong> — a lightweight neural network that runs entirely in your browser.
-                    It works on <strong className="text-[#dbdee1]">both ends</strong> of the call for maximum clarity.
+                    Each participant filters their own microphone before sending it to the call; browser echo cancellation and noise suppression are also requested.
                     Disable it on low-end devices if you notice high CPU usage.
                   </p>
                 </div>

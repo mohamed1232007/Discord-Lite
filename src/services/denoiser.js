@@ -11,6 +11,9 @@ export async function getRnnoiseWasmBinary() {
     rnnoiseBinaryPromise = loadRnnoise({
       url: rnnoiseWasmPath,
       simdUrl: rnnoiseSimdWasmPath,
+    }).catch((error) => {
+      rnnoiseBinaryPromise = null;
+      throw error;
     });
   }
   return rnnoiseBinaryPromise;
@@ -20,12 +23,12 @@ export async function getRnnoiseWasmBinary() {
  * تطبيق الـ RNNoise Neural Noise Suppression على MediaStream صوتي
  * @param {MediaStream} rawStream - مسار الصوت الأصلي من المايك
  * @param {AudioContext} [existingCtx] - AudioContext اختياري
- * @returns {Promise<{ cleanStream: MediaStream, audioContext: AudioContext, rnnoiseNode: RnnoiseWorkletNode, cleanup: () => void }>}
+ * @returns {Promise<{ cleanStream: MediaStream, audioContext: AudioContext, rnnoiseNode: RnnoiseWorkletNode, isActive: boolean, cleanup: () => void }>}
  */
 export async function applyRnnoiseDenoise(rawStream, existingCtx = null) {
   const audioTracks = rawStream.getAudioTracks();
   if (audioTracks.length === 0) {
-    return { cleanStream: rawStream, audioContext: null, rnnoiseNode: null, cleanup: () => {} };
+    return { cleanStream: rawStream, audioContext: null, rnnoiseNode: null, isActive: false, cleanup: () => {} };
   }
 
   try {
@@ -83,6 +86,7 @@ export async function applyRnnoiseDenoise(rawStream, existingCtx = null) {
       cleanStream,
       audioContext,
       rnnoiseNode,
+      isActive: true,
       cleanup
     };
   } catch (err) {
@@ -91,8 +95,8 @@ export async function applyRnnoiseDenoise(rawStream, existingCtx = null) {
       cleanStream: rawStream,
       audioContext: null,
       rnnoiseNode: null,
+      isActive: false,
       cleanup: () => {}
     };
   }
 }
-

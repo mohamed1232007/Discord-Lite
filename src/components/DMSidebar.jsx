@@ -27,6 +27,7 @@ export default function DMSidebar({ selectedChat, setSelectedChat, onOpenAuth })
   const toast = useToast();
   const {
     activeCall,
+    callParticipants,
     isMuted,
     isDeafened,
     isVideoEnabled,
@@ -98,6 +99,7 @@ export default function DMSidebar({ selectedChat, setSelectedChat, onOpenAuth })
   const currentUsername    = user?.username || 'guest';
 
   const callFriendName = activeCall?.friend?.display_name || activeCall?.friend?.username || 'Bedo';
+  const activeParticipantCount = callParticipants?.filter((participant) => participant.status === 'active').length || 0;
 
   return (
     <div className="w-64 bg-[#000000] border-r border-[#1e1f22]/30 flex flex-col h-full select-none shrink-0 font-sans">
@@ -182,7 +184,9 @@ export default function DMSidebar({ selectedChat, setSelectedChat, onOpenAuth })
             friends.map((u) => {
               const isSelected = selectedChat?.id === u.id;
               const isOnline   = onlineUsers.has(u.id);
-              const isInCall   = activeCall?.friend?.id === u.id;
+              const isInCall = callParticipants?.some((participant) => (
+                participant.user_id === u.id && participant.status === 'active'
+              )) || activeCall?.friend?.id === u.id;
 
               return (
                 <div
@@ -249,7 +253,7 @@ export default function DMSidebar({ selectedChat, setSelectedChat, onOpenAuth })
                     Voice Connected
                   </div>
                   <div className="text-[11px] text-[#949ba4] truncate leading-tight mt-0.5">
-                    🌺 * دوشــــــه * / {callFriendName} server
+                    {callFriendName} · {activeParticipantCount} in voice
                   </div>
                 </div>
               </div>
