@@ -1,4 +1,4 @@
-import React, { useState } from 'react';
+import React, { useCallback, useState } from 'react';
 import { AuthProvider, useAuth } from './context/AuthContext';
 import { VoiceProvider, useVoice } from './context/VoiceContext';
 import { ToastProvider } from './context/ToastContext';
@@ -18,6 +18,7 @@ function MainApp() {
   // شاشة التحديث تظهر فقط داخل تطبيق الويندوز (Tauri)، ولا تظهر لزوار الموقع في المتصفح
   const isTauriApp = typeof window !== 'undefined' && Boolean(window.__TAURI_INTERNALS__ || window.__TAURI__);
   const [updaterFinished, setUpdaterFinished] = useState(!isTauriApp);
+  const finishUpdater = useCallback(() => setUpdaterFinished(true), []);
 
   // تذكّر الصفحة المفضلة، وإذا كان المستخدم مسجل دخوله في جلسة سابقة يدخل مباشرة للـ app
   const [currentView, setCurrentView] = useState(() => {
@@ -61,7 +62,7 @@ function MainApp() {
   }, [activeCall]);
 
   if (!updaterFinished) {
-    return <DiscordUpdater onFinished={() => setUpdaterFinished(true)} />;
+    return <DiscordUpdater onFinished={finishUpdater} />;
   }
 
   if (loading) {
