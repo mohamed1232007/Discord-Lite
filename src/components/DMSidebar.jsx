@@ -350,21 +350,33 @@ export default function DMSidebar({ selectedChat, setSelectedChat, onOpenAuth })
               className="flex items-center gap-2 p-1 rounded hover:bg-[#18191c] cursor-pointer min-w-0 pr-1"
               title={`@${currentUsername}`}
             >
-              {/* Profile Avatar with Green Speaking Ring & Status Dot */}
+              {/* Profile Avatar with Status Dot */}
               <div className="relative shrink-0">
-                <div className="w-8 h-8 rounded-full bg-[#111214] flex items-center justify-center text-white text-[11px] font-mono font-bold border-2 border-[#23a55a]">
-                  &lt;/&gt;
+                <div className={`w-8 h-8 rounded-full bg-[#1e1f22] flex items-center justify-center text-white text-xs font-semibold overflow-hidden ${
+                  activeCall ? 'border-2 border-[#23a55a]' : ''
+                }`}>
+                  {user.avatar_url ? (
+                    <img src={user.avatar_url} alt={currentDisplayName} className="w-full h-full object-cover" />
+                  ) : (
+                    currentDisplayName.substring(0, 2).toUpperCase()
+                  )}
                 </div>
                 <span className="absolute -bottom-0.5 -right-0.5 w-2.5 h-2.5 rounded-full border-2 border-[#070708] bg-[#23a55a]" />
               </div>
 
-              {/* Username & Subtitle - كامل بدون قص */}
+              {/* Username & Subtitle */}
               <div className="min-w-0">
                 <div className="text-[13px] font-semibold text-white truncate leading-tight">{currentDisplayName}</div>
-                <div className="text-[11px] text-[#23a55a] font-normal flex items-center gap-1 leading-tight mt-0.5">
-                  <span className="text-[10px]">🔊</span>
-                  <span>In voice</span>
-                </div>
+                {activeCall ? (
+                  <div className="text-[11px] text-[#23a55a] font-normal flex items-center gap-1 leading-tight mt-0.5">
+                    <span className="text-[10px]">🔊</span>
+                    <span>In voice</span>
+                  </div>
+                ) : (
+                  <div className="text-[11px] text-[#949ba4] font-normal truncate leading-tight mt-0.5">
+                    Online
+                  </div>
+                )}
               </div>
             </div>
           ) : (

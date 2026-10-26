@@ -372,7 +372,6 @@ export default function FriendsView({ onStartChat }) {
                         <div className="min-w-0">
                           <div className="flex items-center gap-1.5">
                             <span className="font-semibold text-white text-sm group-hover:underline">{f.display_name || f.username}</span>
-                            <span className="text-xs text-[#80848e] font-normal">@{f.username}</span>
                           </div>
                           <div className="text-xs text-[#80848e] truncate">
                             {online ? 'Online' : 'Offline'}

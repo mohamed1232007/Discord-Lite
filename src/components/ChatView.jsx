@@ -21,9 +21,10 @@ import { supabase } from '../services/supabaseClient';
 const BACKEND_URL = import.meta.env.VITE_BACKEND_URL || 'http://localhost:5000/api';
 
 export default function ChatView({ user, onBack }) {
-  const { user: currentUser, token } = useAuth();
+  const { user: currentUser, token, onlineUsers } = useAuth();
   const { startCall } = useVoice();
 
+  const isOnline = onlineUsers?.has(user.id);
   const displayName = user.display_name || user.username || user.name || 'Friend';
   const myName = currentUser?.display_name || currentUser?.username || 'Me';
 
@@ -149,13 +150,10 @@ export default function ChatView({ user, onBack }) {
               )}
             </div>
             <span className={`absolute -bottom-0.5 -right-0.5 w-2.5 h-2.5 rounded-full border-2 border-[#000000] ${
-              user.status === 'online' ? 'bg-[#23a55a]' :
-              user.status === 'idle' ? 'bg-[#f0b232]' :
-              user.status === 'dnd' ? 'bg-[#f23f43]' : 'bg-[#80848e]'
+              isOnline ? 'bg-[#23a55a]' : 'bg-[#80848e]'
             }`} />
           </div>
           <span className="font-bold text-white text-base">{displayName}</span>
-          <span className="text-xs text-[#80848e] hidden sm:inline">@{user.username || 'user'}</span>
         </div>
 
         {/* Action icons - تفعيل المكالمات الصوتية والفيديو */}

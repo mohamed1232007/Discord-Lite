@@ -19,6 +19,8 @@ export const VoiceProvider = ({ children }) => {
   const [isDeafened,      setIsDeafened]     = useState(false);
   const [isVideoEnabled,  setIsVideoEnabled] = useState(false);
   const [isScreenSharing, setIsScreenSharing]= useState(false);
+  const [isRemoteScreenSharing, setIsRemoteScreenSharing] = useState(false);
+  const [isRemoteCamera,        setIsRemoteCamera]        = useState(false);
   const [peerReady,       setPeerReady]      = useState(false);
 
   // ── Audio Devices State ────────────────────────────────
@@ -40,6 +42,86 @@ export const VoiceProvider = ({ children }) => {
   const screenStreamRef = useRef(null);
   const dbCallIdRef     = useRef(null);
   const activeCallRef   = useRef(null);      // mirror of activeCall state (للـ closures)
+  const mediaChannelRef = useRef(null);
+  const dataConnectionRef = useRef(null);
+
+  // إعداد قناة البيانات المباشرة WebRTC P2P DataChannel
+  const setupDataConnection = (conn) => {
+    if (!conn) return;
+    dataConnectionRef.current = conn;
+    conn.on('data', (data) => {
+      console.log('[PeerData received]', data);
+      if (data?.type === 'screen') {
+        setIsRemoteScreenSharing(!!data.enabled);
+      } else if (data?.type === 'camera') {
+        setIsRemoteCamera(!!data.enabled);
+      }
+    });
+    conn.on('close', () => {
+      if (dataConnectionRef.current === conn) {
+        dataConnectionRef.current = null;
+      }
+    });
+    conn.on('error', (err) => console.warn('[PeerData error]', err));
+  };
+
+  // إرسال إشارات الفيديو والشير سكرين فورياً للطرف الآخر
+  const sendMediaSignal = (payload) => {
+    const fullPayload = { ...payload, senderId: user?.id };
+    // 1. إرسال فوري P2P عبر WebRTC DataChannel (أسرع وأضمن)
+    if (dataConnectionRef.current && dataConnectionRef.current.open) {
+      try {
+        dataConnectionRef.current.send(fullPayload);
+      } catch (err) {
+        console.warn('[PeerData send error]', err);
+      }
+    }
+    // 2. إرسال عبر Supabase Realtime broadcast
+    if (mediaChannelRef.current) {
+      mediaChannelRef.current.send({
+        type: 'broadcast',
+        event: 'media_state',
+        payload: fullPayload
+      }).catch(err => console.warn('[sendMediaSignal] error:', err));
+    }
+  };
+
+  // مراقبة قناة إشارات الميديا للمكالمة الحالية (شير سكرين وكاميرا)
+  useEffect(() => {
+    if (!activeCall?.friend?.id || !user?.id) {
+      if (mediaChannelRef.current) {
+        supabase.removeChannel(mediaChannelRef.current);
+        mediaChannelRef.current = null;
+      }
+      setIsRemoteScreenSharing(false);
+      setIsRemoteCamera(false);
+      return;
+    }
+
+    // قناة موحدة ومؤكدة بين الطرفين مباشرة بناءً على User IDs
+    const pairId = [user.id, activeCall.friend.id].sort().join('_');
+    const ch = supabase.channel(`call-media-${pairId}`)
+      .on('broadcast', { event: 'media_state' }, ({ payload }) => {
+        console.log('[MediaSignal received]', payload);
+        if (payload?.senderId && payload.senderId !== user.id) {
+          if (payload.type === 'screen') {
+            setIsRemoteScreenSharing(!!payload.enabled);
+          } else if (payload.type === 'camera') {
+            setIsRemoteCamera(!!payload.enabled);
+          }
+        }
+      })
+      .subscribe((status) => {
+        console.log('[call-media status]:', status);
+      });
+
+    mediaChannelRef.current = ch;
+
+    return () => {
+      supabase.removeChannel(ch);
+      mediaChannelRef.current = null;
+    };
+  }, [activeCall?.friend?.id, user?.id]);
 
   // DOM refs
   const remoteAudioRef = useRef(null);
@@ -323,35 +405,21 @@ export const VoiceProvider = ({ children }) => {
   };
 
   // ─────────────────────────────────────────────────────
-  // Helper: Attach remote stream to <audio>/<video> with RNNoise on receiving end
+  // Helper: Attach remote stream to <audio>/<video>
   // ─────────────────────────────────────────────────────
   const attachRemote = async (stream) => {
     console.log('[Remote] attaching stream, tracks:', stream.getTracks().length);
     remoteStreamRef.current = stream;
 
-    // تطبيق RNNoise أيضاً عند استقبال الصوت لضمان نقاء الصوت 100% عند الطرفين
-    let audioOutput = stream;
-    if (isNoiseSuppressionEnabled && stream.getAudioTracks().length > 0) {
-      try {
-        if (remoteDenoiseCleanupRef.current) {
-          remoteDenoiseCleanupRef.current();
-          remoteDenoiseCleanupRef.current = null;
-        }
-        const { cleanStream, cleanup } = await applyRnnoiseDenoise(stream);
-        remoteDenoiseCleanupRef.current = cleanup;
-        audioOutput = cleanStream;
-      } catch (err) {
-        console.warn('[RNNoise] remote denoise fallback to direct stream:', err);
-      }
-    }
-
+    // الصوت المستقبَل يتم تشغيله نقياً ومباشراً بدون فلترة مزدوجة
     if (remoteAudioRef.current) {
-      remoteAudioRef.current.srcObject = audioOutput;
+      remoteAudioRef.current.srcObject = stream;
       remoteAudioRef.current.muted = false;
       remoteAudioRef.current.play().catch(e => console.warn('[Audio] play blocked:', e));
     }
     if (remoteVideoRef.current) {
       remoteVideoRef.current.srcObject = stream;
+      remoteVideoRef.current.play().catch(e => console.warn('[Video] play blocked:', e));
     }
   };
 
@@ -408,6 +476,12 @@ export const VoiceProvider = ({ children }) => {
     p.on('call', (call) => {
       console.log('[Peer] incoming PeerJS call from:', call.peer);
       pendingCallRef.current = call;
+    });
+
+    // اتصال بيانات P2P وارد للإشارات اللحظية
+    p.on('connection', (conn) => {
+      console.log('[Peer] incoming data connection from:', conn.peer);
+      setupDataConnection(conn);
     });
 
     return () => {
@@ -528,10 +602,17 @@ export const VoiceProvider = ({ children }) => {
       peerCallRef.current = call;
       setupCallListeners(call);
 
+      try {
+        const conn = peerRef.current.connect(targetId);
+        setupDataConnection(conn);
+      } catch (e) {
+        console.warn('[startCall] data conn error:', e);
+      }
+
       setIsMuted(false);
       setIsDeafened(false);
       setCallStatus('calling'); // بيرن — لحد ما الطرف التاني يرد ويوصل stream
-      setActiveCall({ friend, isVideo });
+      setActiveCall({ friend, isVideo, callId: rec?.id });
     } catch (err) {
       console.error('[startCall] error:', err);
     }
@@ -578,12 +659,21 @@ export const VoiceProvider = ({ children }) => {
       // حدّث DB
       await supabase.from('calls').update({ status: 'accepted' }).eq('id', inc.callId);
 
+      try {
+        const callerTargetId = inc.callerId.replace(/-/g, '');
+        const conn = peerRef.current.connect(callerTargetId);
+        setupDataConnection(conn);
+      } catch (e) {
+        console.warn('[answerCall] data conn error:', e);
+      }
+
       setIsMuted(false);
       setIsDeafened(false);
       setCallStatus('connected'); // المستقبِل يبدأ connected مباشرة
       setActiveCall({
         friend: { id: inc.callerId, display_name: inc.callerName, username: inc.callerName },
-        isVideo: false
+        isVideo: false,
+        callId: inc.callId
       });
       setIncomingCall(null);
     } catch (err) {
@@ -664,6 +754,10 @@ export const VoiceProvider = ({ children }) => {
     }
     peerCallRef.current    = null;
     pendingCallRef.current = null;
+    if (dataConnectionRef.current) {
+      try { dataConnectionRef.current.close(); } catch {}
+      dataConnectionRef.current = null;
+    }
 
     // 4. تصفير عناصر الصوت والفيديو
     try {
@@ -690,6 +784,8 @@ export const VoiceProvider = ({ children }) => {
     setIsDeafened(false);
     setIsVideoEnabled(false);
     setIsScreenSharing(false);
+    setIsRemoteScreenSharing(false);
+    setIsRemoteCamera(false);
   };
 
   // نصدّر endCall كـ wrapper يقبل بدون argument أيضاً
@@ -779,12 +875,13 @@ export const VoiceProvider = ({ children }) => {
 
       const pc = peerCallRef.current?.peerConnection;
       if (pc && blankTrack) {
-        const videoSender = pc.getSenders().find(s => s.track && s.track.kind === 'video');
+        const videoSender = pc.getSenders().find(s => s.track?.kind === 'video') || pc.getTransceivers?.().find(t => t.receiver?.track?.kind === 'video')?.sender;
         if (videoSender) videoSender.replaceTrack(blankTrack);
       }
 
       if (localVideoRef.current) localVideoRef.current.srcObject = null;
       setIsVideoEnabled(false);
+      sendMediaSignal({ type: 'camera', enabled: false });
     } else {
       try {
         const vs = await navigator.mediaDevices.getUserMedia({ video: true });
@@ -804,13 +901,14 @@ export const VoiceProvider = ({ children }) => {
         // استبدال في WebRTC sender فورياً ليظهر عند الطرف الآخر
         const pc = peerCallRef.current?.peerConnection;
         if (pc) {
-          const videoSender = pc.getSenders().find(s => s.track && s.track.kind === 'video');
+          const videoSender = pc.getSenders().find(s => s.track?.kind === 'video') || pc.getTransceivers?.().find(t => t.receiver?.track?.kind === 'video')?.sender;
           if (videoSender) {
             videoSender.replaceTrack(vTrack);
           }
         }
 
         setIsVideoEnabled(true);
+        sendMediaSignal({ type: 'camera', enabled: true });
       } catch (e) {
         console.error('[toggleCamera]', e);
         toast.error('Could not access camera. Please check browser permissions.');
@@ -823,25 +921,41 @@ export const VoiceProvider = ({ children }) => {
   // ─────────────────────────────────────────────────────
   const toggleScreenShare = async () => {
     if (isScreenSharing) {
-      // أوقف المشاركة
+      // أوقف المشاركة بأمان — الترتيب مهم جداً لمنع قفل الكول!
+
+      // 1. أولاً: استبدال المسار في الـ PeerConnection بمسار خامل *قبل* إيقاف مسار الشاشة
+      //    لأن إيقاف المسار وهو لسه في الـ sender ممكن يسبب ICE failure ويقفل الكول
+      const blankTrack = createBlankVideoTrack();
+      const pc = peerCallRef.current?.peerConnection;
+      if (pc && blankTrack) {
+        const videoSender = pc.getSenders().find(s => s.track?.kind === 'video') || pc.getTransceivers?.().find(t => t.receiver?.track?.kind === 'video')?.sender;
+        if (videoSender) {
+          try {
+            await videoSender.replaceTrack(blankTrack);
+          } catch (e) {
+            console.warn('[toggleScreenShare] replaceTrack error:', e);
+          }
+        }
+      }
+
+      // 2. ثانياً: إزالة الـ onended handler لمنع التضارب مع الكود ده
+      if (screenStreamRef.current) {
+        screenStreamRef.current.getVideoTracks().forEach(t => { t.onended = null; });
+      }
+
+      // 3. ثالثاً: إيقاف مسارات الشاشة بأمان (بعد ما المسار الخامل أخد مكانه)
       screenStreamRef.current?.getTracks().forEach(t => t.stop());
       screenStreamRef.current = null;
 
-      // العودة للمسار الخامل في الـ PeerConnection
-      const blankTrack = createBlankVideoTrack();
-      if (blankTrack && localStreamRef.current) {
+      // 4. تحديث الـ localStream
+      if (localStreamRef.current && blankTrack) {
         localStreamRef.current.getVideoTracks().forEach(t => localStreamRef.current.removeTrack(t));
         localStreamRef.current.addTrack(blankTrack);
       }
 
-      const pc = peerCallRef.current?.peerConnection;
-      if (pc && blankTrack) {
-        const videoSender = pc.getSenders().find(s => s.track && s.track.kind === 'video');
-        if (videoSender) videoSender.replaceTrack(blankTrack);
-      }
-
       if (localVideoRef.current) localVideoRef.current.srcObject = null;
       setIsScreenSharing(false);
+      sendMediaSignal({ type: 'screen', enabled: false });
     } else {
       try {
         const ss = await navigator.mediaDevices.getDisplayMedia({ video: true, audio: false });
@@ -851,7 +965,7 @@ export const VoiceProvider = ({ children }) => {
         // 1. استبدال المسار فورياً في الـ WebRTC Video Sender ليظهر عند الطرف الآخر فوراً!
         const pc = peerCallRef.current?.peerConnection;
         if (pc) {
-          const videoSender = pc.getSenders().find(s => s.track && s.track.kind === 'video');
+          const videoSender = pc.getSenders().find(s => s.track?.kind === 'video') || pc.getTransceivers?.().find(t => t.receiver?.track?.kind === 'video')?.sender;
           if (videoSender) {
             console.log('[ScreenShare] replacing video track in sender ✓');
             await videoSender.replaceTrack(sTrack);
@@ -868,6 +982,7 @@ export const VoiceProvider = ({ children }) => {
         }
 
         setIsScreenSharing(true);
+        sendMediaSignal({ type: 'screen', enabled: true });
 
         setTimeout(() => {
           if (localVideoRef.current && screenStreamRef.current) {
@@ -876,18 +991,34 @@ export const VoiceProvider = ({ children }) => {
           }
         }, 100);
 
-        // لما المستخدم يقفل شير من متصفح كروم/ويندوز نفسه
-        sTrack.onended = () => {
+        // لما المستخدم يقفل شير من متصفح كروم/ويندوز نفسه (مش من زرارنا)
+        sTrack.onended = async () => {
+          // 1. أولاً: استبدال المسار في الـ sender بمسار خامل *قبل* أي حاجة تانية
+          const blankTrack = createBlankVideoTrack();
+          const currentPc = peerCallRef.current?.peerConnection;
+          if (currentPc && blankTrack) {
+            const videoSender = currentPc.getSenders().find(s => s.track?.kind === 'video') || currentPc.getTransceivers?.().find(t => t.receiver?.track?.kind === 'video')?.sender;
+            if (videoSender) {
+              try {
+                await videoSender.replaceTrack(blankTrack);
+              } catch (e) {
+                console.warn('[ScreenShare onended] replaceTrack error:', e);
+              }
+            }
+          }
+
+          // 2. تنظيف الحالة
           screenStreamRef.current = null;
           if (localVideoRef.current) localVideoRef.current.srcObject = null;
-          setIsScreenSharing(false);
 
-          // إعادة المسار الخامل
-          const blankTrack = createBlankVideoTrack();
-          if (pc && blankTrack) {
-            const videoSender = pc.getSenders().find(s => s.track && s.track.kind === 'video');
-            if (videoSender) videoSender.replaceTrack(blankTrack);
+          // 3. تحديث الـ localStream
+          if (localStreamRef.current && blankTrack) {
+            localStreamRef.current.getVideoTracks().forEach(t => localStreamRef.current.removeTrack(t));
+            localStreamRef.current.addTrack(blankTrack);
           }
+
+          setIsScreenSharing(false);
+          sendMediaSignal({ type: 'screen', enabled: false });
         };
       } catch (err) {
         console.error('[toggleScreenShare]', err);
@@ -896,12 +1027,49 @@ export const VoiceProvider = ({ children }) => {
   };
 
   // دالة تشغيل / إيقاف خاصية عزل الضوضاء بالذكاء الاصطناعي (RNNoise)
-  const toggleNoiseSuppression = () => {
-    setIsNoiseSuppressionEnabled(prev => {
-      const nextVal = !prev;
-      toast.info(nextVal ? 'Noise Suppression (RNNoise) Enabled' : 'Noise Suppression Disabled');
-      return nextVal;
-    });
+  const toggleNoiseSuppression = async () => {
+    const nextVal = !isNoiseSuppressionEnabled;
+    setIsNoiseSuppressionEnabled(nextVal);
+    toast.info(nextVal ? 'Noise Suppression (RNNoise) Enabled' : 'Noise Suppression Disabled');
+
+    if (activeCall && rawMicStreamRef.current && localStreamRef.current) {
+      try {
+        if (denoiseCleanupRef.current) {
+          denoiseCleanupRef.current();
+          denoiseCleanupRef.current = null;
+        }
+
+        let finalAudioTrack;
+        if (nextVal) {
+          const { cleanStream, cleanup } = await applyRnnoiseDenoise(rawMicStreamRef.current);
+          denoiseCleanupRef.current = cleanup;
+          finalAudioTrack = cleanStream.getAudioTracks()[0] || rawMicStreamRef.current.getAudioTracks()[0];
+        } else {
+          finalAudioTrack = rawMicStreamRef.current.getAudioTracks()[0];
+        }
+
+        if (finalAudioTrack) {
+          finalAudioTrack.enabled = !isMuted;
+          const oldTrack = localStreamRef.current.getAudioTracks()[0];
+          if (oldTrack && oldTrack !== finalAudioTrack) {
+            localStreamRef.current.removeTrack(oldTrack);
+          }
+          if (!localStreamRef.current.getAudioTracks().includes(finalAudioTrack)) {
+            localStreamRef.current.addTrack(finalAudioTrack);
+          }
+
+          const pc = peerCallRef.current?.peerConnection;
+          if (pc) {
+            const audioSender = pc.getSenders().find(s => s.track?.kind === 'audio') || pc.getTransceivers?.().find(t => t.receiver?.track?.kind === 'audio')?.sender;
+            if (audioSender) {
+              await audioSender.replaceTrack(finalAudioTrack);
+            }
+          }
+        }
+      } catch (err) {
+        console.warn('[toggleNoiseSuppression] live switch warning:', err);
+      }
+    }
   };
 
   // ─────────────────────────────────────────────────────
@@ -917,6 +1085,8 @@ export const VoiceProvider = ({ children }) => {
       isDeafened,
       isVideoEnabled,
       isScreenSharing,
+      isRemoteScreenSharing,
+      isRemoteCamera,
       isNoiseSuppressionEnabled,
       toggleNoiseSuppression,
       microphones,
