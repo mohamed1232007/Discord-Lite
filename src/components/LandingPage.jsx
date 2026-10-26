@@ -108,14 +108,15 @@ export default function LandingPage({ onOpenApp, onOpenLogin }) {
         {/* ── 3. Bottom Two Action Buttons (طابق 100% مع الصورة التانية) ── */}
         <div className="flex flex-wrap items-center justify-center gap-4 pt-10">
           {/* 1. White Button: Download for Windows */}
-          <button
-            type="button"
-            onClick={() => toast.info('Under development')}
-            className="px-8 py-4 rounded-full bg-white hover:bg-[#f2f3f5] text-[#23272a] font-bold text-base flex items-center gap-3 shadow-xl transition transform hover:scale-[1.03] active:scale-[0.98] cursor-pointer"
+          <a
+            href="/Discord-Lite-Setup.exe"
+            download="Discord-Lite-Setup.exe"
+            onClick={() => toast.success('Starting download...')}
+            className="px-8 py-4 rounded-full bg-white hover:bg-[#f2f3f5] text-[#23272a] font-bold text-base flex items-center gap-3 shadow-xl transition transform hover:scale-[1.03] active:scale-[0.98] cursor-pointer no-underline select-none"
           >
             <Download size={22} className="stroke-[2.5]" />
             <span>Download for Windows</span>
-          </button>
+          </a>
 
           {/* 2. Blurple Button: Open Discord In your browser */}
           <button
