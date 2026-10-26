@@ -26,5 +26,6 @@ dist-ssr
 *.sln
 *.sw?
 
-# Desktop App (Tauri)
-src-tauri/
+# Tauri build output and private updater signing key
+src-tauri/target/
+src-tauri/updater.key
