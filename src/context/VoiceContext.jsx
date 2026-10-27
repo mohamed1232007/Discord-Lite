@@ -933,7 +933,7 @@ export const VoiceProvider = ({ children }) => {
             peer_id: peerIdRef.current,
             invited_by: user.id,
             status: 'active',
-            noise_suppression_enabled: noiseSuppressionActiveRef.current,
+            noise_suppression_enabled: noiseSuppressionActiveRef.current === true,
             joined_at: new Date().toISOString(),
           },
           {
@@ -955,7 +955,7 @@ export const VoiceProvider = ({ children }) => {
       dbCallIdRef.current = room.id;
       localMembershipActiveRef.current = true;
       const participants = [
-        { user_id: user.id, peer_id: peerIdRef.current, status: 'active', noise_suppression_enabled: noiseSuppressionActiveRef.current, user },
+        { user_id: user.id, peer_id: peerIdRef.current, status: 'active', noise_suppression_enabled: noiseSuppressionActiveRef.current === true, user },
         { user_id: friend.id, status: 'invited', noise_suppression_enabled: true, user: friend },
       ];
       callParticipantsRef.current = participants;
