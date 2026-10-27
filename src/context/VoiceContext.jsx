@@ -465,6 +465,15 @@ export const VoiceProvider = ({ children }) => {
       : null
   );
 
+  const callErrorMessage = (error, fallback) => {
+    const microphoneMessage = microphoneErrorMessage(error);
+    if (microphoneMessage) return microphoneMessage;
+    if (typeof error?.message === 'string' && error.message.trim()) {
+      return `${fallback}: ${error.message}`;
+    }
+    return fallback;
+  };
+
   // ─────────────────────────────────────────────────────
   // Helper: Attach remote stream to <audio>/<video>
   // ─────────────────────────────────────────────────────
@@ -957,7 +966,7 @@ export const VoiceProvider = ({ children }) => {
       rawMicStreamRef.current = null;
       denoiseCleanupRef.current?.();
       denoiseCleanupRef.current = null;
-      toast.error(microphoneErrorMessage(err) || 'Could not start the call. Please try again.');
+      toast.error(callErrorMessage(err, 'Could not start the call'));
     }
   };
 
@@ -1022,7 +1031,7 @@ export const VoiceProvider = ({ children }) => {
     } catch (err) {
       console.error('[answerCall] error:', err);
       localMembershipActiveRef.current = false;
-      toast.error(microphoneErrorMessage(err) || 'Could not join the call. Please try again.');
+      toast.error(callErrorMessage(err, 'Could not join the call'));
       if (acceptedMembership) {
         try {
           const { error } = await supabase
