@@ -17,7 +17,7 @@ import { supabase } from '../services/supabaseClient';
 
 const BACKEND_URL = import.meta.env.VITE_BACKEND_URL || 'http://localhost:5000/api';
 
-export default function ChatView({ user, onBack }) {
+export default function ChatView({ user, onBack, onCallStarted }) {
   const { user: currentUser, token, onlineUsers } = useAuth();
   const { startCall } = useVoice();
 
@@ -125,6 +125,11 @@ export default function ChatView({ user, onBack }) {
     }
   };
 
+  const handleStartCall = async (isVideo) => {
+    onCallStarted?.();
+    await startCall(user, isVideo);
+  };
+
   return (
     <div className="flex-1 flex flex-col bg-[#000000] h-full overflow-hidden">
       {/* Chat Top Header */}
@@ -156,14 +161,14 @@ export default function ChatView({ user, onBack }) {
         {/* Action icons - تفعيل المكالمات الصوتية والفيديو */}
         <div className="flex items-center gap-2 text-[#80848e]">
           <button 
-            onClick={() => startCall(user, false)}
+            onClick={() => handleStartCall(false)}
             className="hover:text-[#23a55a] p-2 hover:bg-[#111214] rounded-full transition" 
             title="Start Voice Call"
           >
             <Phone size={19} />
           </button>
           <button 
-            onClick={() => startCall(user, true)}
+            onClick={() => handleStartCall(true)}
             className="hover:text-[#23a55a] p-2 hover:bg-[#111214] rounded-full transition" 
             title="Start Video Call"
           >

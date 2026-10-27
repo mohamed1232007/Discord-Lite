@@ -1,7 +1,7 @@
 {
   "$schema": "../node_modules/@tauri-apps/cli/config.schema.json",
   "productName": "Discord Lite",
-  "version": "2.3.5",
+  "version": "2.3.6",
   "identifier": "com.discordlite.app",
   "build": {
     "frontendDist": "../dist",
@@ -13,10 +13,11 @@
     "windows": [
       {
         "title": "Discord Lite",
-        "width": 1280,
-        "height": 800,
+        "width": 1100,
+        "height": 620,
         "minWidth": 940,
         "minHeight": 600,
+        "center": true,
         "resizable": true,
         "fullscreen": false
       }

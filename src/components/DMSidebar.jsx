@@ -1,4 +1,4 @@
-import React, { useState, useEffect, useRef } from 'react';
+import { useState, useEffect, useRef } from 'react';
 import {
   Users,
   Sparkles,
@@ -22,7 +22,7 @@ import SettingsPage from './SettingsPage';
 
 const BACKEND_URL = import.meta.env.VITE_BACKEND_URL || 'http://localhost:5000/api';
 
-export default function DMSidebar({ selectedChat, setSelectedChat, onShowCall, onOpenAuth }) {
+export default function DMSidebar({ selectedChat, onSelectChat, onShowCall, onOpenAuth }) {
   const { user, token, onlineUsers, signOut } = useAuth();
   const toast = useToast();
   const {
@@ -108,7 +108,7 @@ export default function DMSidebar({ selectedChat, setSelectedChat, onShowCall, o
       <div className="h-12 px-2.5 flex items-center border-b border-[#111214]">
         <button
           type="button"
-          onClick={() => setSelectedChat(null)}
+          onClick={() => onSelectChat(null)}
           className="w-full h-7 bg-[#111214] text-[#80848e] text-xs px-2 rounded flex items-center justify-start gap-2 hover:bg-[#18191c] transition cursor-pointer"
         >
           <span>Find or start a conversation</span>
@@ -120,7 +120,7 @@ export default function DMSidebar({ selectedChat, setSelectedChat, onShowCall, o
 
         <button
           type="button"
-          onClick={() => setSelectedChat(null)}
+          onClick={() => onSelectChat(null)}
           className={`w-full flex items-center gap-4 px-3 py-2 rounded-md transition cursor-pointer ${
             selectedChat === null ? 'bg-[#18191c] text-white' : 'hover:bg-[#111214] hover:text-[#dbdee1]'
           }`}
@@ -191,7 +191,7 @@ export default function DMSidebar({ selectedChat, setSelectedChat, onShowCall, o
               return (
                 <div
                   key={u.id}
-                  onClick={() => setSelectedChat(u)}
+                  onClick={() => onSelectChat(u)}
                   className={`w-full group flex items-center justify-between px-2 py-1.5 rounded-md cursor-pointer transition ${
                     isSelected ? 'bg-[#18191c] text-white' : 'hover:bg-[#111214] hover:text-[#dbdee1]'
                   }`}
@@ -220,7 +220,7 @@ export default function DMSidebar({ selectedChat, setSelectedChat, onShowCall, o
                   {isSelected && (
                     <button
                       type="button"
-                      onClick={(e) => { e.stopPropagation(); setSelectedChat(null); }}
+                      onClick={(e) => { e.stopPropagation(); onSelectChat(null); }}
                       className="text-[#80848e] hover:text-white p-0.5 rounded cursor-pointer"
                       title="Close DM"
                     >

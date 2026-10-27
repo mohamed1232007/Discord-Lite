@@ -1,4 +1,3 @@
-import React from 'react';
 import { 
   PhoneOff, 
   PhoneCall, 
@@ -6,7 +5,7 @@ import {
 } from 'lucide-react';
 import { useVoice } from '../context/VoiceContext';
 
-export default function CallOverlay() {
+export default function CallOverlay({ onCallStarted }) {
   const { 
     incomingCall, 
     answerCall, 
@@ -19,6 +18,10 @@ export default function CallOverlay() {
   // استخراج الاسم بأمان تام
   const callerName = incomingCall.callerName || incomingCall.callerDisplayName || 'Friend';
   const callerInitials = callerName ? callerName.substring(0, 2).toUpperCase() : 'FR';
+  const handleAnswer = async () => {
+    await answerCall();
+    onCallStarted?.();
+  };
 
   return (
     <div className="fixed bottom-6 right-6 z-50 select-none">
@@ -51,7 +54,7 @@ export default function CallOverlay() {
           {/* Accept Button - Green with continuous pulse */}
           <button
             type="button"
-            onClick={answerCall}
+            onClick={handleAnswer}
             className="relative w-10 h-10 rounded-full bg-[#23a55a] hover:bg-[#1a7e44] text-white flex items-center justify-center shadow-lg transition-transform hover:scale-110 active:scale-95 cursor-pointer"
             title="Accept Call"
           >

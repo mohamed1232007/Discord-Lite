@@ -1,4 +1,3 @@
-import React from 'react';
 import { 
   Compass, 
   Plus
@@ -8,7 +7,7 @@ import { useToast } from '../context/ToastContext';
 export default function ServerSidebar({ activeTab, setActiveTab }) {
   const toast = useToast();
   return (
-    <div className="w-[72px] bg-[#000000] border-r border-[#1e1f22]/40 flex flex-col items-center py-3 gap-2 select-none z-20 shrink-0">
+    <div className="w-16 bg-[#000000] border-r border-[#1e1f22]/40 flex flex-col items-center py-3 gap-2 select-none z-20 shrink-0">
       {/* Discord Home / DMs button */}
       <button 
         type="button"
