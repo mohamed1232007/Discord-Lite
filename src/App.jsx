@@ -112,10 +112,12 @@ function MainApp() {
             />
 
             {/* 3. الجانب الأيمن: شاشة الكول الكبيرة أو الشات أو الأصدقاء */}
-            {activeCall ? (
-              <CallScreen />
-            ) : selectedChat ? (
+            {selectedChat ? (
               <ChatView user={selectedChat} onBack={() => setSelectedChat(null)} />
+            ) : activeCall ? (
+              <CallScreen onOpenChat={() => {
+                if (activeCall.friend?.id) setSelectedChat(activeCall.friend);
+              }} />
             ) : (
               <FriendsView 
                 onStartChat={(u) => setSelectedChat(u)} 

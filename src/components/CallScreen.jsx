@@ -19,7 +19,7 @@ import { useToast } from '../context/ToastContext';
 
 const BACKEND_URL = import.meta.env.VITE_BACKEND_URL || 'http://localhost:5000/api';
 
-export default function CallScreen() {
+export default function CallScreen({ onOpenChat }) {
   const {
     activeCall,
     callParticipants,
@@ -269,7 +269,13 @@ export default function CallScreen() {
           )}
         </div>
         <div className="flex items-center gap-2 text-[#80848e]">
-          <button type="button" className="hover:text-white p-1 rounded hover:bg-[#1e1f22] transition" title="Chat">
+          <button
+            type="button"
+            onClick={onOpenChat}
+            className="hover:text-white p-1 rounded hover:bg-[#1e1f22] transition"
+            title="Open chat"
+            aria-label="Open chat"
+          >
             <MessageSquare size={18} />
           </button>
         </div>
