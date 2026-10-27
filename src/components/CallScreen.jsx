@@ -277,62 +277,6 @@ export default function CallScreen() {
 
       {/* VIDEO / AVATAR AREA */}
       <div className="flex-1 p-4 flex items-center justify-center overflow-hidden relative">
-        <div className="absolute top-2 left-2 right-2 z-30 flex gap-2 overflow-x-auto pointer-events-none">
-          {activeParticipants.map((participant) => {
-            const state = getParticipantState(participant);
-            const name = participant.user_id === currentUser?.id
-              ? `${myName} (You)`
-              : participant.user?.display_name || participant.user?.username || 'Friend';
-            const iconClass = (active, danger = false) => (
-              `shrink-0 ${!state.synced ? 'text-[#62666d]' : danger && active ? 'text-[#f23f43]' : active ? 'text-[#23a55a]' : 'text-[#80848e]'}`
-            );
-            return (
-              <div key={participant.user_id} className="flex shrink-0 items-center gap-2 rounded-lg border border-[#2b2d31] bg-[#111214]/95 px-2.5 py-1.5 text-[10px] text-[#dbdee1] shadow-lg">
-                <span className="max-w-24 truncate font-semibold" title={name}>{name}</span>
-                {state.muted ? <MicOff
-                  size={14}
-                  className={iconClass(state.muted, true)}
-                  aria-label={state.synced ? (state.muted ? 'Microphone muted' : 'Microphone on') : 'Waiting for microphone status'}
-                  title={state.synced ? (state.muted ? 'Microphone muted' : 'Microphone on') : 'Waiting for microphone status'}
-                /> : <Mic
-                  size={14}
-                  className={iconClass(state.muted, true)}
-                  aria-label={state.synced ? 'Microphone on' : 'Waiting for microphone status'}
-                  title={state.synced ? 'Microphone on' : 'Waiting for microphone status'}
-                />}
-                {state.deafened ? <VolumeX
-                  size={14}
-                  className={iconClass(state.deafened, true)}
-                  aria-label={state.synced ? (state.deafened ? 'Deafened' : 'Audio enabled') : 'Waiting for audio status'}
-                  title={state.synced ? (state.deafened ? 'Deafened' : 'Audio enabled') : 'Waiting for audio status'}
-                /> : <Headphones
-                  size={14}
-                  className={iconClass(state.deafened, true)}
-                  aria-label={state.synced ? 'Audio enabled' : 'Waiting for audio status'}
-                  title={state.synced ? 'Audio enabled' : 'Waiting for audio status'}
-                />}
-                <Video
-                  size={14}
-                  className={iconClass(state.camera)}
-                  aria-label={state.synced ? (state.camera ? 'Camera on' : 'Camera off') : 'Waiting for camera status'}
-                  title={state.synced ? (state.camera ? 'Camera on' : 'Camera off') : 'Waiting for camera status'}
-                />
-                <Monitor
-                  size={14}
-                  className={iconClass(state.screen)}
-                  aria-label={state.synced ? (state.screen ? 'Screen sharing' : 'Not sharing screen') : 'Waiting for screen-share status'}
-                  title={state.synced ? (state.screen ? 'Screen sharing' : 'Not sharing screen') : 'Waiting for screen-share status'}
-                />
-                <Sparkles
-                  size={14}
-                  className={iconClass(state.noiseSuppressionActive)}
-                  aria-label={state.noiseSuppressionActive ? 'AI noise suppression active' : 'AI noise suppression inactive'}
-                  title={state.noiseSuppressionActive ? 'AI noise suppression active' : 'AI noise suppression inactive'}
-                />
-              </div>
-            );
-          })}
-        </div>
 
         {/* حالة 1: الشير سكرين شغال من أحد الطرفين (Hero Stage + Picture-in-Picture) */}
         {isRemoteSharingScreen || isScreenSharing ? (
