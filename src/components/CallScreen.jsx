@@ -23,6 +23,7 @@ export default function CallScreen() {
   const {
     activeCall,
     callParticipants,
+    remoteCallStates,
     remoteStreams,
     remoteAudioElementsRef,
     callStatus,      // 'calling' | 'connected'
@@ -157,14 +158,44 @@ export default function CallScreen() {
   const myName     = currentUser?.display_name || currentUser?.username || 'Me';
   const myUser     = currentUser?.username || 'me';
 
-  const showRemoteCamera   = (isRemoteCamera || activeCall.isVideo) && isConnected;
+  const activeParticipants = callParticipants.filter((participant) => participant.status === 'active');
+  const remoteScreenParticipant = activeParticipants.find((participant) => (
+    participant.user_id !== currentUser?.id && remoteCallStates[participant.user_id]?.screen
+  ));
+  const remoteCameraParticipants = activeParticipants.filter((participant) => (
+    participant.user_id !== currentUser?.id && remoteCallStates[participant.user_id]?.camera
+  ));
+  const isRemoteSharingScreen = !!remoteScreenParticipant || isRemoteScreenSharing;
+  const showRemoteCamera = remoteCameraParticipants.length > 0 || isRemoteCamera;
   const showLocalCamera    = isVideoEnabled;
-  const isVideoCallActive  = showRemoteCamera || showLocalCamera;
+  const isVideoCallActive  = !!activeCall.isVideo || showRemoteCamera || showLocalCamera;
+  const getParticipantState = (participant) => {
+    const isLocal = participant.user_id === currentUser?.id;
+    const remoteState = remoteCallStates[participant.user_id];
+    return {
+      muted: isLocal ? isMuted : remoteState?.muted,
+      deafened: isLocal ? isDeafened : remoteState?.deafened,
+      camera: isLocal ? isVideoEnabled : remoteState?.camera,
+      screen: isLocal ? isScreenSharing : remoteState?.screen,
+      noiseSuppressionActive: isLocal
+        ? isNoiseSuppressionActive
+        : remoteState?.noiseSuppressionActive ?? participant.noise_suppression_enabled,
+      synced: isLocal || !!remoteState?.synced,
+    };
+  };
   const activeParticipantIds = new Set(callParticipants
     .filter((participant) => ['active', 'invited'].includes(participant.status))
     .map((participant) => participant.user_id));
   const inviteableFriends = friends.filter((friend) => !activeParticipantIds.has(friend.id));
   const selectedFriends = friends.filter((friend) => selectedInviteIds.includes(friend.id));
+  const setVideoStream = (element, stream) => {
+    if (!element || !stream) return;
+    if (element.srcObject !== stream) element.srcObject = stream;
+    element.play().catch((error) => console.warn('[Video] play blocked:', error));
+  };
+  const getRemoteStream = (participantId) => (
+    remoteStreams.find((entry) => entry.userId === participantId)?.stream
+  );
 
   const openInviteModal = async () => {
     setSelectedInviteIds([]);
@@ -246,15 +277,74 @@ export default function CallScreen() {
 
       {/* VIDEO / AVATAR AREA */}
       <div className="flex-1 p-4 flex items-center justify-center overflow-hidden relative">
+        <div className="absolute top-2 left-2 right-2 z-30 flex gap-2 overflow-x-auto pointer-events-none">
+          {activeParticipants.map((participant) => {
+            const state = getParticipantState(participant);
+            const name = participant.user_id === currentUser?.id
+              ? `${myName} (You)`
+              : participant.user?.display_name || participant.user?.username || 'Friend';
+            const iconClass = (active, danger = false) => (
+              `shrink-0 ${!state.synced ? 'text-[#62666d]' : danger && active ? 'text-[#f23f43]' : active ? 'text-[#23a55a]' : 'text-[#80848e]'}`
+            );
+            return (
+              <div key={participant.user_id} className="flex shrink-0 items-center gap-2 rounded-lg border border-[#2b2d31] bg-[#111214]/95 px-2.5 py-1.5 text-[10px] text-[#dbdee1] shadow-lg">
+                <span className="max-w-24 truncate font-semibold" title={name}>{name}</span>
+                {state.muted ? <MicOff
+                  size={14}
+                  className={iconClass(state.muted, true)}
+                  aria-label={state.synced ? (state.muted ? 'Microphone muted' : 'Microphone on') : 'Waiting for microphone status'}
+                  title={state.synced ? (state.muted ? 'Microphone muted' : 'Microphone on') : 'Waiting for microphone status'}
+                /> : <Mic
+                  size={14}
+                  className={iconClass(state.muted, true)}
+                  aria-label={state.synced ? 'Microphone on' : 'Waiting for microphone status'}
+                  title={state.synced ? 'Microphone on' : 'Waiting for microphone status'}
+                />}
+                {state.deafened ? <VolumeX
+                  size={14}
+                  className={iconClass(state.deafened, true)}
+                  aria-label={state.synced ? (state.deafened ? 'Deafened' : 'Audio enabled') : 'Waiting for audio status'}
+                  title={state.synced ? (state.deafened ? 'Deafened' : 'Audio enabled') : 'Waiting for audio status'}
+                /> : <Headphones
+                  size={14}
+                  className={iconClass(state.deafened, true)}
+                  aria-label={state.synced ? 'Audio enabled' : 'Waiting for audio status'}
+                  title={state.synced ? 'Audio enabled' : 'Waiting for audio status'}
+                />}
+                <Video
+                  size={14}
+                  className={iconClass(state.camera)}
+                  aria-label={state.synced ? (state.camera ? 'Camera on' : 'Camera off') : 'Waiting for camera status'}
+                  title={state.synced ? (state.camera ? 'Camera on' : 'Camera off') : 'Waiting for camera status'}
+                />
+                <Monitor
+                  size={14}
+                  className={iconClass(state.screen)}
+                  aria-label={state.synced ? (state.screen ? 'Screen sharing' : 'Not sharing screen') : 'Waiting for screen-share status'}
+                  title={state.synced ? (state.screen ? 'Screen sharing' : 'Not sharing screen') : 'Waiting for screen-share status'}
+                />
+                <Sparkles
+                  size={14}
+                  className={iconClass(state.noiseSuppressionActive)}
+                  aria-label={state.noiseSuppressionActive ? 'AI noise suppression active' : 'AI noise suppression inactive'}
+                  title={state.noiseSuppressionActive ? 'AI noise suppression active' : 'AI noise suppression inactive'}
+                />
+              </div>
+            );
+          })}
+        </div>
 
         {/* حالة 1: الشير سكرين شغال من أحد الطرفين (Hero Stage + Picture-in-Picture) */}
-        {isRemoteScreenSharing || isScreenSharing ? (
+        {isRemoteSharingScreen || isScreenSharing ? (
           <div className="relative w-full h-full flex items-center justify-center bg-[#050506] rounded-2xl overflow-hidden border border-[#1e1f22]/80 shadow-2xl">
             {/* الشاشة المعروضة الأساسية (Main Stage Video) */}
-            {isRemoteScreenSharing ? (
+            {isRemoteSharingScreen ? (
               <div className="w-full h-full relative flex items-center justify-center">
                 <video
-                  ref={remoteVideoRef}
+                  ref={(element) => setVideoStream(
+                    element,
+                    getRemoteStream(remoteScreenParticipant?.user_id) || remoteStreamRef.current,
+                  )}
                   autoPlay
                   playsInline
                   className="w-full h-full object-contain bg-black"
@@ -262,7 +352,11 @@ export default function CallScreen() {
                 {/* شارة الشير سكرين للطرف الثاني */}
                 <div className="absolute top-4 left-4 bg-[#5865f2] text-white text-xs px-3 py-1.5 rounded-lg font-bold flex items-center gap-2 shadow-lg z-10 backdrop-blur-sm">
                   <Monitor size={15} />
-                  <span>{friendName} is sharing their screen</span>
+                  <span>
+                    {remoteScreenParticipant?.user?.display_name
+                      || remoteScreenParticipant?.user?.username
+                      || friendName} is sharing their screen
+                  </span>
                 </div>
               </div>
             ) : (
@@ -291,11 +385,25 @@ export default function CallScreen() {
 
             {/* كارت الـ PIP الصغير في الزاوية للطرف الآخر */}
             <div className="absolute bottom-4 right-4 w-52 h-36 bg-[#111214]/95 border border-[#2b2d31] rounded-xl shadow-2xl overflow-hidden z-20 flex items-center justify-center backdrop-blur-md transition-all hover:scale-105">
-              {isRemoteScreenSharing ? (
+              {isRemoteSharingScreen ? (
                 // أنت في الـ PIP لأن الطرف الثاني هو اللي فاتح شير
                 <div className="w-full h-full relative flex items-center justify-center">
-                  {isVideoEnabled ? (
-                    <video ref={localVideoRef} autoPlay muted playsInline className="w-full h-full object-cover" />
+                  {isScreenSharing ? (
+                    <video
+                      ref={(element) => setVideoStream(element, screenStreamRef.current)}
+                      autoPlay
+                      muted
+                      playsInline
+                      className="w-full h-full object-cover"
+                    />
+                  ) : isVideoEnabled ? (
+                    <video
+                      ref={(element) => setVideoStream(element, localStreamRef.current)}
+                      autoPlay
+                      muted
+                      playsInline
+                      className="w-full h-full object-cover"
+                    />
                   ) : (
                     <div className="flex flex-col items-center">
                       <div className="w-12 h-12 rounded-full bg-[#1e1f22] border-2 border-[#2b2d31] flex items-center justify-center text-white font-bold text-sm">
@@ -315,8 +423,16 @@ export default function CallScreen() {
               ) : (
                 // صديقك في الـ PIP لأنك أنت اللي فاتح شير
                 <div className="w-full h-full relative flex items-center justify-center">
-                  {showRemoteCamera && !isRemoteScreenSharing ? (
-                    <video ref={remoteVideoRef} autoPlay playsInline className="w-full h-full object-cover" />
+                  {remoteCameraParticipants[0] ? (
+                    <video
+                      ref={(element) => setVideoStream(
+                        element,
+                        getRemoteStream(remoteCameraParticipants[0].user_id),
+                      )}
+                      autoPlay
+                      playsInline
+                      className="w-full h-full object-cover"
+                    />
                   ) : (
                     <div className="flex flex-col items-center">
                       <div className={`w-12 h-12 rounded-full bg-[#1e1f22] border-2 flex items-center justify-center text-white font-bold text-sm ${
@@ -331,59 +447,56 @@ export default function CallScreen() {
                       <span className="text-white text-xs font-medium mt-1.5">{friendName}</span>
                     </div>
                   )}
-                  {isDeafened && (
-                    <span className="absolute bottom-2 right-2 text-xs bg-black/80 px-1.5 py-0.5 rounded">🔇</span>
-                  )}
                 </div>
               )}
             </div>
           </div>
         ) : isVideoCallActive ? (
-          /* حالة 2: مكالمة فيديو عادية بالكاميرا بدون شير سكرين (Side-by-Side Video Grid) */
-          <div className="grid grid-cols-2 gap-4 w-full h-full max-w-5xl items-center justify-center">
-            {/* Friend Video Card */}
-            <div className="relative w-full h-full max-h-[500px] bg-[#08080a] border border-[#1e1f22] rounded-2xl flex items-center justify-center overflow-hidden shadow-2xl">
-              <video ref={remoteVideoRef} autoPlay playsInline className={`w-full h-full object-cover ${showRemoteCamera ? 'block' : 'hidden'}`} />
-              {!showRemoteCamera && (
-                <div className="flex flex-col items-center gap-3">
-                  <div className={`w-24 h-24 rounded-full bg-[#18191c] border-4 flex items-center justify-center text-white text-2xl font-bold shadow-xl ${
-                    isConnected ? 'border-[#23a55a]' : 'border-[#f0b132]'
-                  }`}>
-                    {activeCall.friend?.avatar_url ? (
-                      <img src={activeCall.friend.avatar_url} alt={friendName} className="w-full h-full rounded-full object-cover" />
-                    ) : (
-                      friendName.substring(0, 2).toUpperCase()
-                    )}
+          /* حالة 2: عرض فيديو كل أعضاء المكالمة */
+          <div className="grid grid-cols-1 sm:grid-cols-2 xl:grid-cols-3 gap-4 w-full h-full max-w-6xl items-center justify-center overflow-y-auto">
+            {activeParticipants.map((participant) => {
+              const isLocal = participant.user_id === currentUser?.id;
+              const participantUser = participant.user || {};
+              const name = isLocal
+                ? `${myName} (You)`
+                : participantUser.display_name || participantUser.username || 'Friend';
+              const state = getParticipantState(participant);
+              const remoteVideoStream = isLocal ? null : getRemoteStream(participant.user_id);
+              const cameraVisible = !!state.camera && (isLocal || !!remoteVideoStream);
+              return (
+                <div key={participant.user_id} className="relative w-full h-full min-h-56 max-h-[500px] bg-[#08080a] border border-[#1e1f22] rounded-2xl flex items-center justify-center overflow-hidden shadow-2xl">
+                  {cameraVisible && (
+                    <video
+                      ref={(element) => setVideoStream(
+                        element,
+                        isLocal ? localStreamRef.current : remoteVideoStream,
+                      )}
+                      autoPlay
+                      muted={isLocal}
+                      playsInline
+                      className="absolute inset-0 w-full h-full object-cover"
+                    />
+                  )}
+                  {!cameraVisible && (
+                    <div className="flex flex-col items-center gap-3">
+                      <div className={`w-24 h-24 rounded-full bg-[#18191c] border-4 flex items-center justify-center text-white text-2xl font-bold shadow-xl ${
+                        state.muted ? 'border-[#f23f43]' : 'border-[#23a55a]'
+                      }`}>
+                        {participantUser.avatar_url ? (
+                          <img src={participantUser.avatar_url} alt={name} className="w-full h-full rounded-full object-cover" />
+                        ) : (
+                          name.substring(0, 2).toUpperCase()
+                        )}
+                      </div>
+                      <span className="text-white font-semibold text-sm">{name}</span>
+                    </div>
+                  )}
+                  <div className="absolute bottom-3 left-3 bg-black/80 backdrop-blur-sm text-white text-xs px-2.5 py-1 rounded-md font-medium border border-[#1e1f22]">
+                    {name}{state.muted ? ' · Muted' : ''}{state.deafened ? ' · Deafened' : ''}
                   </div>
-                  <span className="text-white font-semibold text-sm">{friendName}</span>
                 </div>
-              )}
-              <div className="absolute bottom-3 left-3 bg-black/80 backdrop-blur-sm text-white text-xs px-2.5 py-1 rounded-md font-medium border border-[#1e1f22]">
-                {friendName}
-              </div>
-            </div>
-
-            {/* Local Video Card */}
-            <div className="relative w-full h-full max-h-[500px] bg-[#08080a] border border-[#1e1f22] rounded-2xl flex items-center justify-center overflow-hidden shadow-2xl">
-              <video ref={localVideoRef} autoPlay muted playsInline className={`w-full h-full object-cover ${showLocalCamera ? 'block' : 'hidden'}`} />
-              {!showLocalCamera && (
-                <div className="flex flex-col items-center gap-3">
-                  <div className={`w-24 h-24 rounded-full bg-[#18191c] border-4 flex items-center justify-center text-white text-2xl font-bold shadow-xl ${
-                    isMuted ? 'border-[#f23f43]' : 'border-[#23a55a]'
-                  }`}>
-                    {currentUser?.avatar_url ? (
-                      <img src={currentUser.avatar_url} alt={myName} className="w-full h-full rounded-full object-cover" />
-                    ) : (
-                      myName.substring(0, 2).toUpperCase()
-                    )}
-                  </div>
-                  <span className="text-white font-semibold text-sm">{myName}</span>
-                </div>
-              )}
-              <div className="absolute bottom-3 left-3 bg-black/80 backdrop-blur-sm text-white text-xs px-2.5 py-1 rounded-md font-medium border border-[#1e1f22]">
-                {myName} (You)
-              </div>
-            </div>
+              );
+            })}
           </div>
         ) : (
           /* حالة 3: مكالمة صوتية نقية (Pure Voice Call - Classic Discord Stage) */
@@ -395,7 +508,7 @@ export default function CallScreen() {
             </div>
 
             <div className="flex flex-wrap items-center justify-center gap-5 w-full max-w-5xl">
-              {callParticipants.filter((participant) => participant.status === 'active').map((participant) => {
+              {activeParticipants.map((participant) => {
                 const isLocal = participant.user_id === currentUser?.id;
                 const participantUser = participant.user || {};
                 const participantName = isLocal
@@ -404,10 +517,9 @@ export default function CallScreen() {
                 const participantUsername = isLocal
                   ? myUser
                   : participantUser.username || 'user';
-                const muted = isLocal && isMuted;
-                const noiseActive = isLocal
-                  ? isNoiseSuppressionActive
-                  : participant.noise_suppression_enabled;
+                const participantState = getParticipantState(participant);
+                const muted = participantState.muted;
+                const noiseActive = participantState.noiseSuppressionActive;
 
                 return (
                   <div key={participant.user_id} className="w-64 min-h-72 bg-[#111214] border border-[#1e1f22] rounded-2xl flex flex-col items-center justify-center p-6 shadow-2xl relative transition-all hover:border-[#2b2d31]">
@@ -432,8 +544,8 @@ export default function CallScreen() {
                         {noiseActive ? 'AI noise suppression active' : 'Built-in noise suppression requested'}
                       </div>
                     </div>
-                    {isDeafened && !isLocal && (
-                      <span className="absolute bottom-3 right-3 text-xs bg-black/80 px-2 py-1 rounded-md border border-[#1e1f22]">🔇 Deafened</span>
+                    {participantState.deafened && (
+                      <span className="absolute bottom-3 left-3 text-xs bg-black/80 px-2 py-1 rounded-md border border-[#1e1f22]">🔇 Deafened</span>
                     )}
                     {muted && (
                       <span className="absolute bottom-3 right-3 text-xs bg-black/80 px-2 py-1 rounded-md border border-[#1e1f22] text-[#f23f43]">🔇 Muted</span>
