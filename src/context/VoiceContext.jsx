@@ -1,5 +1,4 @@
 import { createContext, useContext, useEffect, useState, useRef } from 'react';
-import { invoke } from '@tauri-apps/api/core';
 import Peer from 'peerjs';
 import { useAuth } from './AuthContext';
 import { useToast } from './ToastContext';
@@ -66,7 +65,6 @@ export const VoiceProvider = ({ children }) => {
   const remoteDenoiseCleanupRef = useRef(null); // تنظيف فلتر الطرف المستقبل
   const remoteAudioElementsRef = useRef(new Map());
   const screenStreamRef = useRef(null);
-  const screenFrameLoopRef = useRef(null);
   const dbCallIdRef     = useRef(null);
   const activeCallRef   = useRef(null);      // mirror of activeCall state (للـ closures)
   const mediaChannelRef = useRef(null);
@@ -229,110 +227,6 @@ export const VoiceProvider = ({ children }) => {
   useEffect(() => { activeCallRef.current = activeCall; }, [activeCall]);
   useEffect(() => { incomingCallRef.current = incomingCall; }, [incomingCall]);
   useEffect(() => { callParticipantsRef.current = callParticipants; }, [callParticipants]);
-
-  const isDesktopApp = () => (
-    typeof window !== 'undefined' && (
-      !!window.__TAURI_INTERNALS__
-      || window.location.protocol === 'tauri:'
-      || navigator.userAgent.includes('Tauri')
-    )
-  );
-
-  const stopScreenFrameLoop = () => {
-    if (screenFrameLoopRef.current) {
-      window.clearInterval(screenFrameLoopRef.current);
-      screenFrameLoopRef.current = null;
-    }
-  };
-
-  const listScreenSources = async () => {
-    if (!isDesktopApp()) return [];
-    try {
-      const sources = await invoke('list_screen_sources');
-      return Array.isArray(sources) ? sources : [];
-    } catch (error) {
-      console.warn('[ScreenShare] Failed to load sources from Tauri:', error);
-      return [];
-    }
-  };
-
-  const startScreenShareFromSource = async (source) => {
-    if (!source || !isDesktopApp()) {
-      throw new Error('Desktop source picker is unavailable in this environment.');
-    }
-
-    const sourceType = source.kind === 'monitor' ? 'monitor' : 'window';
-    const canvas = document.createElement('canvas');
-    const width = Math.max(1280, Number(source.width) || 1280);
-    const height = Math.max(720, Number(source.height) || 720);
-    canvas.width = width;
-    canvas.height = height;
-    const context = canvas.getContext('2d');
-    if (!context) {
-      throw new Error('Canvas is not available for screen sharing.');
-    }
-
-    stopScreenFrameLoop();
-    const stream = canvas.captureStream(60);
-    const videoTrack = stream.getVideoTracks()[0];
-    if (!videoTrack) {
-      stream.getTracks().forEach((track) => track.stop());
-      throw new Error('Could not create a screen-capture video track.');
-    }
-
-    screenStreamRef.current = stream;
-    videoTrack.contentHint = 'detail';
-    await replacePeerTrack('video', videoTrack, {
-      maxBitrate: 2_000_000,
-      maxFramerate: 60,
-      degradationPreference: 'maintain-resolution',
-    });
-
-    if (localVideoRef.current) {
-      localVideoRef.current.srcObject = stream;
-      localVideoRef.current.play().catch(() => {});
-    }
-
-    setIsScreenSharing(true);
-    publishCallState({ screen: true });
-
-    screenFrameLoopRef.current = window.setInterval(async () => {
-      try {
-        const imageDataUrl = await invoke('capture_source_preview', {
-          kind: sourceType,
-          id: Number(source.id),
-        });
-        if (!imageDataUrl || !document.body || !canvas) return;
-        const image = new Image();
-        image.onload = () => {
-          context.clearRect(0, 0, canvas.width, canvas.height);
-          context.drawImage(image, 0, 0, canvas.width, canvas.height);
-        };
-        image.src = imageDataUrl;
-      } catch (error) {
-        console.warn('[ScreenShare] Failed to refresh source frame:', error);
-      }
-    }, 1000 / 60);
-
-    videoTrack.onended = async () => {
-      stopScreenFrameLoop();
-      try {
-        await restoreVideoAfterScreenShare();
-      } catch (error) {
-        console.error('[ScreenShare] Could not restore the video sender after source capture ended:', error);
-      }
-      if (localVideoRef.current) localVideoRef.current.srcObject = null;
-      screenStreamRef.current?.getTracks().forEach((track) => {
-        if (track.kind === 'video') track.onended = null;
-        track.stop();
-      });
-      screenStreamRef.current = null;
-      setIsScreenSharing(false);
-      publishCallState({ screen: false });
-    };
-
-    return stream;
-  };
 
   const getPeerCalls = () => Array.from(peerCallsRef.current.values());
   const replacePeerTrack = async (kind, track, quality = null) => {
@@ -1708,10 +1602,6 @@ export const VoiceProvider = ({ children }) => {
       setIsScreenSharing(false);
       publishCallState({ screen: false });
     } else {
-      if (isDesktopApp()) {
-        window.dispatchEvent(new CustomEvent('discord-lite-open-screen-picker'));
-        return;
-      }
       try {
         const ss = await navigator.mediaDevices.getDisplayMedia({
           video: {
@@ -1914,9 +1804,7 @@ export const VoiceProvider = ({ children }) => {
       toggleMute,
       toggleDeafen,
       toggleCamera,
-      toggleScreenShare,
-      startScreenShareFromSource,
-      listScreenSources
+      toggleScreenShare
     }}>
       {children}
     </VoiceContext.Provider>
