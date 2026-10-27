@@ -4,7 +4,6 @@ import {
   Mic, MicOff,
   Video, VideoOff,
   Monitor,
-  Smile,
   Sparkles,
   Maximize2,
   Volume2,
@@ -61,7 +60,6 @@ export default function CallScreen() {
   const containerRef = useRef(null);
   const startTimeRef = useRef(0);
   const [callDuration, setCallDuration] = useState(0);
-  const [showSoundboard, setShowSoundboard] = useState(false);
   const [showMicMenu, setShowMicMenu] = useState(false);
   const [showSpeakerMenu, setShowSpeakerMenu] = useState(false);
   const [showInviteModal, setShowInviteModal] = useState(false);
@@ -630,39 +628,6 @@ export default function CallScreen() {
           >
             <Sparkles size={20} />
           </button>
-
-          {/* SOUNDBOARD */}
-          <div className="relative">
-            <button type="button" onClick={() => setShowSoundboard(v => !v)}
-              className={`p-2.5 rounded-lg transition cursor-pointer ${
-                showSoundboard ? 'bg-[#5865f2] text-white' : 'text-[#dbdee1] hover:text-white hover:bg-[#1e1f22]'
-              }`} title="Soundboard"
-            >
-              <Smile size={20} />
-            </button>
-            {showSoundboard && (
-              <div className="absolute bottom-14 left-1/2 -translate-x-1/2 bg-[#111214] border border-[#2b2d31] p-3 rounded-xl shadow-2xl flex gap-2 z-50 whitespace-nowrap">
-                {[
-                  { label: '🔔 Beep', freq: 600,  dur: 0.2,  type: 'sine'     },
-                  { label: '🎺 Horn', freq: 440,  dur: 0.3,  type: 'triangle' },
-                  { label: '🔔 Ding', freq: 880,  dur: 0.15, type: 'sine'     }
-                ].map(s => (
-                  <button key={s.label} type="button"
-                    onClick={() => {
-                      const ctx = new AudioContext();
-                      const osc = ctx.createOscillator();
-                      osc.type = s.type; osc.frequency.value = s.freq;
-                      osc.connect(ctx.destination);
-                      osc.start(); osc.stop(ctx.currentTime + s.dur);
-                    }}
-                    className="px-3 py-2 bg-[#1e1f22] hover:bg-[#5865f2] text-xs font-semibold rounded-lg text-white transition cursor-pointer"
-                  >{s.label}</button>
-                ))}
-                <button type="button" onClick={() => setShowSoundboard(false)}
-                  className="px-2 py-2 bg-[#1e1f22] hover:bg-[#f23f43] text-xs rounded-lg text-[#80848e] hover:text-white transition cursor-pointer">✕</button>
-              </div>
-            )}
-          </div>
 
           {/* END CALL */}
           <button type="button"

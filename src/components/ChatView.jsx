@@ -1,15 +1,12 @@
-import React, { useState, useEffect, useRef } from 'react';
+import { useState, useEffect, useRef } from 'react';
 import { 
   Phone, 
   Video, 
-  Pin, 
-  UserPlus, 
   Search, 
   Inbox, 
   HelpCircle,
   PlusCircle, 
   Gift, 
-  Smile, 
   SendHorizontal,
   ArrowLeft,
   Loader2
@@ -172,13 +169,6 @@ export default function ChatView({ user, onBack }) {
           >
             <Video size={19} />
           </button>
-          <button className="hover:text-white p-2 hover:bg-[#111214] rounded-full transition" title="Pinned Messages">
-            <Pin size={19} />
-          </button>
-          <button className="hover:text-white p-2 hover:bg-[#111214] rounded-full transition" title="Add Friends to DM">
-            <UserPlus size={19} />
-          </button>
-
           <div className="relative hidden md:block ml-2">
             <input 
               type="text" 
@@ -272,9 +262,6 @@ export default function ChatView({ user, onBack }) {
           <div className="flex items-center gap-3 text-[#80848e]">
             <button type="button" className="hover:text-white transition">
               <Gift size={22} />
-            </button>
-            <button type="button" className="hover:text-white transition">
-              <Smile size={22} />
             </button>
             <button 
               type="submit" 

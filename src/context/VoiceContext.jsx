@@ -1,4 +1,4 @@
-import React, { createContext, useContext, useEffect, useState, useRef } from 'react';
+import { createContext, useContext, useEffect, useState, useRef } from 'react';
 import Peer from 'peerjs';
 import { useAuth } from './AuthContext';
 import { useToast } from './ToastContext';
@@ -36,6 +36,8 @@ export const VoiceProvider = ({ children }) => {
   // ── Refs (لا تتغيرش بين renders) ──────────────────────
   const peerRef         = useRef(null);      // PeerJS instance
   const peerIdRef       = useRef(null);
+  const cameraEnabledRef = useRef(false);
+  const pendingVideoCallRef = useRef(false);
   const peerCallRef     = useRef(null);      // MediaConnection الحالية
   const peerCallsRef    = useRef(new Map());
   const pendingCallRef  = useRef(new Map()); // مكالمات PeerJS الواردة حسب المشارك
@@ -62,12 +64,30 @@ export const VoiceProvider = ({ children }) => {
   const setupDataConnection = (conn) => {
     if (!conn) return;
     dataConnectionRef.current.set(conn.peer, conn);
+    conn.on('open', () => {
+      if (activeCallRef.current?.isVideo) {
+        conn.send({ type: 'video_call', enabled: true, senderId: user?.id });
+      } else if (cameraEnabledRef.current) {
+        conn.send({ type: 'camera', enabled: true, senderId: user?.id });
+      }
+    });
     conn.on('data', (data) => {
       console.log('[PeerData received]', data);
       if (data?.type === 'screen') {
         setIsRemoteScreenSharing(!!data.enabled);
       } else if (data?.type === 'camera') {
         setIsRemoteCamera(!!data.enabled);
+      } else if (data?.type === 'video_call' && data.enabled) {
+        setIsRemoteCamera(true);
+        pendingVideoCallRef.current = true;
+        if (activeCallRef.current) {
+          activeCallRef.current = { ...activeCallRef.current, isVideo: true };
+          setActiveCall(activeCallRef.current);
+          pendingVideoCallRef.current = false;
+          if (!cameraEnabledRef.current) {
+            toggleCamera();
+          }
+        }
       }
     });
     conn.on('close', () => {
@@ -146,7 +166,7 @@ export const VoiceProvider = ({ children }) => {
   useEffect(() => { callParticipantsRef.current = callParticipants; }, [callParticipants]);
 
   const getPeerCalls = () => Array.from(peerCallsRef.current.values());
-  const replacePeerTrack = async (kind, track, screenShareQuality = false) => {
+  const replacePeerTrack = async (kind, track, quality = null) => {
     await Promise.all(getPeerCalls().map(async (call) => {
       const pc = call.peerConnection;
       if (!pc) return;
@@ -154,23 +174,75 @@ export const VoiceProvider = ({ children }) => {
         || pc.getTransceivers?.().find((item) => item.receiver?.track?.kind === kind)?.sender;
       if (!sender) return;
       await sender.replaceTrack(track);
-      if (kind === 'video' && screenShareQuality && sender.getParameters && sender.setParameters) {
+      if (quality && sender.getParameters && sender.setParameters) {
         const parameters = sender.getParameters();
         if (parameters.encodings?.length) {
           parameters.encodings = parameters.encodings.map((encoding) => ({
             ...encoding,
-            maxBitrate: 5_000_000,
-            maxFramerate: 60,
+            maxBitrate: quality.maxBitrate,
+            ...(quality.maxFramerate ? { maxFramerate: quality.maxFramerate } : {}),
+            ...(kind === 'audio' ? { priority: 'high' } : {}),
           }));
-          parameters.degradationPreference = 'maintain-resolution';
+          if (kind === 'video') {
+            parameters.degradationPreference = quality.degradationPreference;
+          }
           try {
             await sender.setParameters(parameters);
           } catch (error) {
-            console.warn('[ScreenShare] Could not apply preferred video encoding:', error);
+            console.warn(`[Media] Could not apply preferred ${kind} encoding:`, error);
           }
         }
       }
     }));
+  };
+  const replaceLocalVideoTrack = async (nextTrack, quality = null) => {
+    const stream = localStreamRef.current;
+    const oldTracks = stream?.getVideoTracks() || [];
+
+    await replacePeerTrack('video', nextTrack, quality);
+
+    if (stream) {
+      oldTracks.forEach((track) => stream.removeTrack(track));
+      stream.addTrack(nextTrack);
+    }
+    oldTracks.forEach((track) => {
+      if (track !== nextTrack) track.stop();
+    });
+  };
+  const restoreVideoAfterScreenShare = async () => {
+    const cameraTrack = cameraEnabledRef.current
+      ? localStreamRef.current?.getVideoTracks().find((track) => track.readyState === 'live')
+      : null;
+    if (cameraTrack) {
+      await replacePeerTrack('video', cameraTrack, {
+        maxBitrate: 1_200_000,
+        maxFramerate: 30,
+        degradationPreference: 'maintain-framerate',
+      });
+      return;
+    }
+
+    const blankTrack = createBlankVideoTrack();
+    if (!blankTrack) throw new Error('Could not create a fallback video track.');
+    await replaceLocalVideoTrack(blankTrack);
+  };
+  const configurePeerAudio = async (call) => {
+    const audioSender = call.peerConnection?.getSenders()
+      .find((sender) => sender.track?.kind === 'audio');
+    if (!audioSender?.getParameters || !audioSender?.setParameters) return;
+
+    const parameters = audioSender.getParameters();
+    if (!parameters.encodings?.length) return;
+    parameters.encodings = parameters.encodings.map((encoding) => ({
+      ...encoding,
+      maxBitrate: 64_000,
+      priority: 'high',
+    }));
+    try {
+      await audioSender.setParameters(parameters);
+    } catch (error) {
+      console.warn('[Audio] Could not apply preferred audio encoding:', error);
+    }
   };
 
   // ─────────────────────────────────────────────────────
@@ -418,7 +490,7 @@ export const VoiceProvider = ({ children }) => {
   // ─────────────────────────────────────────────────────
   // Helper: Acquire microphone & initial media stream (with RNNoise Neural Denoise)
   // ─────────────────────────────────────────────────────
-  const acquireMediaStream = async () => {
+  const acquireMediaStream = async ({ includeVideo = false } = {}) => {
     try {
       const audioConstraints = {
         echoCancellation: true,
@@ -431,7 +503,13 @@ export const VoiceProvider = ({ children }) => {
 
       const rawStream = await navigator.mediaDevices.getUserMedia({
         audio: audioConstraints,
-        video: false
+        video: includeVideo
+          ? {
+              width: { ideal: 1280 },
+              height: { ideal: 720 },
+              frameRate: { ideal: 30 },
+            }
+          : false,
       });
       if (rawStream.getAudioTracks().length === 0) {
         rawStream.getTracks().forEach((track) => track.stop());
@@ -464,8 +542,13 @@ export const VoiceProvider = ({ children }) => {
         setIsNoiseSuppressionActive(false);
       }
 
+      const cameraTrack = rawStream.getVideoTracks()[0];
+      if (cameraTrack && !processedStream.getVideoTracks().some((track) => track.id === cameraTrack.id)) {
+        processedStream.addTrack(cameraTrack);
+      }
+
       // إضافة مسار فيديو خامل مسبقاً لكي يكون Video Sender جاهزاً للشير سكرين
-      const blankTrack = createBlankVideoTrack();
+      const blankTrack = processedStream.getVideoTracks().length ? null : createBlankVideoTrack();
       if (blankTrack) {
         processedStream.addTrack(blankTrack);
       }
@@ -603,6 +686,7 @@ export const VoiceProvider = ({ children }) => {
         return;
       }
       setCallStatus('connected');
+      await configurePeerAudio(call);
 
       try {
         const pc = call.peerConnection;
@@ -935,7 +1019,7 @@ export const VoiceProvider = ({ children }) => {
     }
 
     try {
-      const stream = await acquireMediaStream();
+      const stream = await acquireMediaStream({ includeVideo: isVideo });
       localStreamRef.current = stream;
 
       const { data: room, error: roomError } = await supabase
@@ -986,6 +1070,8 @@ export const VoiceProvider = ({ children }) => {
       setActiveCall(callState);
       setIsMuted(false);
       setIsDeafened(false);
+      cameraEnabledRef.current = isVideo;
+      setIsVideoEnabled(isVideo);
       setCallStatus('calling');
     } catch (err) {
       console.error('[startCall] error:', err);
@@ -1052,7 +1138,7 @@ export const VoiceProvider = ({ children }) => {
         roomId: inc.roomId,
         callId: inc.roomId,
         friend: inc.caller,
-        isVideo: false,
+        isVideo: pendingVideoCallRef.current,
         participants,
       };
       activeCallRef.current = callState;
@@ -1060,6 +1146,10 @@ export const VoiceProvider = ({ children }) => {
       incomingCallRef.current = null;
       setIncomingCall(null);
       syncPeerCalls(participants);
+      if (pendingVideoCallRef.current && !cameraEnabledRef.current) {
+        pendingVideoCallRef.current = false;
+        await toggleCamera();
+      }
     } catch (err) {
       console.error('[answerCall] error:', err);
       localMembershipActiveRef.current = false;
@@ -1195,6 +1285,7 @@ export const VoiceProvider = ({ children }) => {
     try {
       if (screenStreamRef.current) {
         screenStreamRef.current.getTracks().forEach(t => {
+          if (t.kind === 'video') t.onended = null;
           t.stop();
           console.log('[endCall] stopped screen track:', t.kind);
         });
@@ -1239,6 +1330,8 @@ export const VoiceProvider = ({ children }) => {
     activeCallRef.current = null;
     incomingCallRef.current = null;
     pendingIncomingRoomRef.current = null;
+    cameraEnabledRef.current = false;
+    pendingVideoCallRef.current = false;
     noiseSuppressionActiveRef.current = false;
     setIsNoiseSuppressionActive(false);
 
@@ -1337,39 +1430,49 @@ export const VoiceProvider = ({ children }) => {
   // ─────────────────────────────────────────────────────
   // 8. Toggle Camera
   // ─────────────────────────────────────────────────────
-  const toggleCamera = async () => {
-    if (isVideoEnabled) {
-      // إيقاف الكاميرا والعودة للمسار الخامل
-      localStreamRef.current?.getVideoTracks().forEach(t => t.stop());
-      const blankTrack = createBlankVideoTrack();
-      if (blankTrack && localStreamRef.current) {
-        localStreamRef.current.addTrack(blankTrack);
-      }
+  async function toggleCamera() {
+    if (screenStreamRef.current) {
+      toast.info('Stop screen sharing before changing the camera.');
+      return;
+    }
 
-      if (blankTrack) await replacePeerTrack('video', blankTrack);
+    if (cameraEnabledRef.current) {
+      const blankTrack = createBlankVideoTrack();
+      if (!blankTrack) {
+        toast.error('Could not stop the camera safely. Please try again.');
+        return;
+      }
+      await replaceLocalVideoTrack(blankTrack);
 
       if (localVideoRef.current) localVideoRef.current.srcObject = null;
+      cameraEnabledRef.current = false;
       setIsVideoEnabled(false);
       sendMediaSignal({ type: 'camera', enabled: false });
     } else {
       try {
-        const vs = await navigator.mediaDevices.getUserMedia({ video: true });
+        const vs = await navigator.mediaDevices.getUserMedia({
+          video: {
+            width: { ideal: 1280 },
+            height: { ideal: 720 },
+            frameRate: { ideal: 30 },
+          },
+        });
         const vTrack = vs.getVideoTracks()[0];
+        if (!vTrack) throw new Error('Camera did not provide a video track.');
+        vTrack.contentHint = 'motion';
 
-        // استبدال في الـ local stream
-        if (localStreamRef.current) {
-          localStreamRef.current.getVideoTracks().forEach(t => localStreamRef.current.removeTrack(t));
-          localStreamRef.current.addTrack(vTrack);
-        }
+        await replaceLocalVideoTrack(vTrack, {
+          maxBitrate: 1_200_000,
+          maxFramerate: 30,
+          degradationPreference: 'maintain-framerate',
+        });
 
         if (localVideoRef.current) {
           localVideoRef.current.srcObject = vs;
           localVideoRef.current.play().catch(() => {});
         }
 
-        // استبدال في WebRTC sender فورياً ليظهر عند الطرف الآخر
-        await replacePeerTrack('video', vTrack);
-
+        cameraEnabledRef.current = true;
         setIsVideoEnabled(true);
         sendMediaSignal({ type: 'camera', enabled: true });
       } catch (e) {
@@ -1377,19 +1480,26 @@ export const VoiceProvider = ({ children }) => {
         toast.error('Could not access camera. Please check browser permissions.');
       }
     }
-  };
+  }
 
   // ─────────────────────────────────────────────────────
   // 9. Toggle Screen Share (شغال فورياً عند الطرفين 100%)
   // ─────────────────────────────────────────────────────
   const toggleScreenShare = async () => {
-    if (isScreenSharing) {
-      // أوقف المشاركة بأمان — الترتيب مهم جداً لمنع قفل الكول!
+    if (!screenStreamRef.current && callStatus !== 'connected') {
+      toast.info('Wait until the call is connected before sharing your screen.');
+      return;
+    }
 
-      // 1. أولاً: استبدال المسار في الـ PeerConnection بمسار خامل *قبل* إيقاف مسار الشاشة
-      //    لأن إيقاف المسار وهو لسه في الـ sender ممكن يسبب ICE failure ويقفل الكول
-      const blankTrack = createBlankVideoTrack();
-      if (blankTrack) await replacePeerTrack('video', blankTrack);
+    if (screenStreamRef.current) {
+      // أوقف المشاركة بأمان — الترتيب مهم جداً لمنع قفل الكول!
+      try {
+        await restoreVideoAfterScreenShare();
+      } catch (error) {
+        console.error('[ScreenShare] Could not restore the video sender:', error);
+        toast.error('Could not stop screen sharing safely. Please try again.');
+        return;
+      }
 
       // 2. ثانياً: إزالة الـ onended handler لمنع التضارب مع الكود ده
       if (screenStreamRef.current) {
@@ -1401,11 +1511,6 @@ export const VoiceProvider = ({ children }) => {
       screenStreamRef.current = null;
 
       // 4. تحديث الـ localStream
-      if (localStreamRef.current && blankTrack) {
-        localStreamRef.current.getVideoTracks().forEach(t => localStreamRef.current.removeTrack(t));
-        localStreamRef.current.addTrack(blankTrack);
-      }
-
       if (localVideoRef.current) localVideoRef.current.srcObject = null;
       setIsScreenSharing(false);
       sendMediaSignal({ type: 'screen', enabled: false });
@@ -1438,7 +1543,11 @@ export const VoiceProvider = ({ children }) => {
         console.info('[ScreenShare] Captured display settings:', sTrack.getSettings());
 
         // 1. استبدال المسار فورياً في الـ WebRTC Video Sender ليظهر عند الطرف الآخر فوراً!
-        await replacePeerTrack('video', sTrack, true);
+        await replacePeerTrack('video', sTrack, {
+          maxBitrate: 2_000_000,
+          maxFramerate: 60,
+          degradationPreference: 'maintain-resolution',
+        });
 
         // 2. ربط الـ stream محلياً فوراً ليظهر عندك أنت أيضاً
         if (localVideoRef.current) {
@@ -1458,25 +1567,43 @@ export const VoiceProvider = ({ children }) => {
 
         // لما المستخدم يقفل شير من متصفح كروم/ويندوز نفسه (مش من زرارنا)
         sTrack.onended = async () => {
-          // 1. أولاً: استبدال المسار في الـ sender بمسار خامل *قبل* أي حاجة تانية
-          const blankTrack = createBlankVideoTrack();
-          if (blankTrack) await replacePeerTrack('video', blankTrack);
+          let restoreError = null;
+          try {
+            await restoreVideoAfterScreenShare();
+          } catch (error) {
+            console.error('[ScreenShare] Could not restore the video sender:', error);
+            restoreError = error;
+          }
 
           // 2. تنظيف الحالة
+          screenStreamRef.current?.getTracks().forEach((track) => {
+            if (track.kind === 'video') track.onended = null;
+            track.stop();
+          });
           screenStreamRef.current = null;
           if (localVideoRef.current) localVideoRef.current.srcObject = null;
 
-          // 3. تحديث الـ localStream
-          if (localStreamRef.current && blankTrack) {
-            localStreamRef.current.getVideoTracks().forEach(t => localStreamRef.current.removeTrack(t));
-            localStreamRef.current.addTrack(blankTrack);
-          }
-
           setIsScreenSharing(false);
           sendMediaSignal({ type: 'screen', enabled: false });
+          if (restoreError) toast.error('Could not restore the camera after screen sharing stopped.');
         };
       } catch (err) {
         console.error('[toggleScreenShare]', err);
+        try {
+          await restoreVideoAfterScreenShare();
+        } catch (restoreError) {
+          console.error('[ScreenShare] Could not restore video after share failure:', restoreError);
+        }
+        screenStreamRef.current?.getTracks().forEach((track) => {
+          if (track.kind === 'video') track.onended = null;
+          track.stop();
+        });
+        screenStreamRef.current = null;
+        if (localVideoRef.current) {
+          localVideoRef.current.srcObject = cameraEnabledRef.current ? localStreamRef.current : null;
+        }
+        setIsScreenSharing(false);
+        toast.error('Could not start screen sharing. Check display-capture permission and try again.');
       }
     }
   };
