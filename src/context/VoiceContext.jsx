@@ -146,13 +146,30 @@ export const VoiceProvider = ({ children }) => {
   useEffect(() => { callParticipantsRef.current = callParticipants; }, [callParticipants]);
 
   const getPeerCalls = () => Array.from(peerCallsRef.current.values());
-  const replacePeerTrack = async (kind, track) => {
+  const replacePeerTrack = async (kind, track, screenShareQuality = false) => {
     await Promise.all(getPeerCalls().map(async (call) => {
       const pc = call.peerConnection;
       if (!pc) return;
       const sender = pc.getSenders().find((item) => item.track?.kind === kind)
         || pc.getTransceivers?.().find((item) => item.receiver?.track?.kind === kind)?.sender;
-      if (sender) await sender.replaceTrack(track);
+      if (!sender) return;
+      await sender.replaceTrack(track);
+      if (kind === 'video' && screenShareQuality && sender.getParameters && sender.setParameters) {
+        const parameters = sender.getParameters();
+        if (parameters.encodings?.length) {
+          parameters.encodings = parameters.encodings.map((encoding) => ({
+            ...encoding,
+            maxBitrate: 5_000_000,
+            maxFramerate: 60,
+          }));
+          parameters.degradationPreference = 'maintain-resolution';
+          try {
+            await sender.setParameters(parameters);
+          } catch (error) {
+            console.warn('[ScreenShare] Could not apply preferred video encoding:', error);
+          }
+        }
+      }
     }));
   };
 
@@ -1394,12 +1411,34 @@ export const VoiceProvider = ({ children }) => {
       sendMediaSignal({ type: 'screen', enabled: false });
     } else {
       try {
-        const ss = await navigator.mediaDevices.getDisplayMedia({ video: true, audio: false });
-        screenStreamRef.current = ss;
+        const ss = await navigator.mediaDevices.getDisplayMedia({
+          video: {
+            width: { ideal: 1280 },
+            height: { ideal: 720 },
+            frameRate: { ideal: 60 },
+          },
+          audio: false,
+        });
         const sTrack = ss.getVideoTracks()[0];
+        if (!sTrack) {
+          ss.getTracks().forEach((track) => track.stop());
+          throw new Error('Screen capture did not provide a video track.');
+        }
+        screenStreamRef.current = ss;
+        sTrack.contentHint = 'detail';
+        try {
+          await sTrack.applyConstraints({
+            width: { ideal: 1280, max: 1280 },
+            height: { ideal: 720, max: 720 },
+            frameRate: { ideal: 60, max: 60 },
+          });
+        } catch (error) {
+          console.warn('[ScreenShare] Browser could not apply preferred capture constraints:', error);
+        }
+        console.info('[ScreenShare] Captured display settings:', sTrack.getSettings());
 
         // 1. استبدال المسار فورياً في الـ WebRTC Video Sender ليظهر عند الطرف الآخر فوراً!
-        await replacePeerTrack('video', sTrack);
+        await replacePeerTrack('video', sTrack, true);
 
         // 2. ربط الـ stream محلياً فوراً ليظهر عندك أنت أيضاً
         if (localVideoRef.current) {

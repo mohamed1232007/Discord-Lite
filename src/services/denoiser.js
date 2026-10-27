@@ -31,9 +31,12 @@ export async function applyRnnoiseDenoise(rawStream, existingCtx = null) {
     return { cleanStream: rawStream, audioContext: null, rnnoiseNode: null, isActive: false, cleanup: () => {} };
   }
 
+  let audioContext;
+  let sourceNode;
+  let rnnoiseNode;
   try {
     // 1. إنشاء أو استخدام AudioContext بتردد 48000Hz (المطلوب بواسطة RNNoise)
-    const audioContext = existingCtx || new (window.AudioContext || window.webkitAudioContext)({
+    audioContext = existingCtx || new (window.AudioContext || window.webkitAudioContext)({
       sampleRate: 48000,
       latencyHint: 'interactive'
     });
@@ -47,13 +50,13 @@ export async function applyRnnoiseDenoise(rawStream, existingCtx = null) {
     await audioContext.audioWorklet.addModule(rnnoiseWorkletPath);
 
     // 3. إنشاء عقدة الـ RNNoise Worklet
-    const rnnoiseNode = new RnnoiseWorkletNode(audioContext, {
+    rnnoiseNode = new RnnoiseWorkletNode(audioContext, {
       wasmBinary,
       maxChannels: 1,
     });
 
     // 4. ربط مسار الصوت: Source -> RNNoise -> Destination
-    const sourceNode = audioContext.createMediaStreamSource(rawStream);
+    sourceNode = audioContext.createMediaStreamSource(rawStream);
     const destinationNode = audioContext.createMediaStreamDestination();
 
     sourceNode.connect(rnnoiseNode);
@@ -61,6 +64,10 @@ export async function applyRnnoiseDenoise(rawStream, existingCtx = null) {
 
     // تجهيز الـ Stream المعالج مع نقل أي فيديو كان موجوداً مسبقاً
     const cleanStream = destinationNode.stream;
+    const processedAudioTrack = cleanStream.getAudioTracks()[0];
+    if (!processedAudioTrack || processedAudioTrack.readyState !== 'live') {
+      throw new Error('RNNoise did not produce a live audio track.');
+    }
     rawStream.getVideoTracks().forEach((vTrack) => {
       cleanStream.addTrack(vTrack);
     });
@@ -91,6 +98,16 @@ export async function applyRnnoiseDenoise(rawStream, existingCtx = null) {
     };
   } catch (err) {
     console.error('[RNNoise] Failed to initialize noise suppression, falling back to raw stream:', err);
+    try {
+      sourceNode?.disconnect();
+      rnnoiseNode?.disconnect();
+      rnnoiseNode?.destroy?.();
+      if (!existingCtx && audioContext && audioContext.state !== 'closed') {
+        await audioContext.close();
+      }
+    } catch (cleanupError) {
+      console.warn('[RNNoise] Failed to clean up an incomplete denoiser:', cleanupError);
+    }
     return {
       cleanStream: rawStream,
       audioContext: null,
