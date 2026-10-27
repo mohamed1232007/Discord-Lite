@@ -35,6 +35,7 @@ export const VoiceProvider = ({ children }) => {
 
   // ── Refs (لا تتغيرش بين renders) ──────────────────────
   const peerRef         = useRef(null);      // PeerJS instance
+  const peerIdRef       = useRef(null);
   const peerCallRef     = useRef(null);      // MediaConnection الحالية
   const peerCallsRef    = useRef(new Map());
   const pendingCallRef  = useRef(new Map()); // مكالمات PeerJS الواردة حسب المشارك
@@ -503,7 +504,10 @@ export const VoiceProvider = ({ children }) => {
   // Helper: Setup peerCall event listeners
   // ─────────────────────────────────────────────────────
   const getPeerUserId = (peerId) => callParticipantsRef.current
-    .find((participant) => participant.user_id.replace(/-/g, '') === peerId)?.user_id;
+    .find((participant) => (
+      participant.peer_id === peerId
+      || participant.user_id.replace(/-/g, '') === peerId
+    ))?.user_id;
 
   const answerPeerCall = (call, participantId) => {
     if (!call || !participantId || !localStreamRef.current || peerCallsRef.current.has(participantId)) return;
@@ -524,7 +528,9 @@ export const VoiceProvider = ({ children }) => {
     }
   };
 
-  const startPeerCall = (participantId) => {
+  const startPeerCall = (participant) => {
+    const participantId = participant.user_id;
+    const remotePeerId = participant.peer_id || participantId.replace(/-/g, '');
     if (!peerRef.current || !localStreamRef.current || peerCallsRef.current.has(participantId)) return;
     if (user?.id >= participantId) return;
     if (!localStreamRef.current.getAudioTracks().some((track) => track.readyState === 'live')) {
@@ -533,8 +539,7 @@ export const VoiceProvider = ({ children }) => {
     }
 
     try {
-      const peerId = participantId.replace(/-/g, '');
-      const call = peerRef.current.call(peerId, localStreamRef.current);
+      const call = peerRef.current.call(remotePeerId, localStreamRef.current);
       if (!call) {
         console.error('[PeerCall] Failed to create call for participant:', participantId);
         toast.error('Could not connect to a call participant.');
@@ -544,7 +549,7 @@ export const VoiceProvider = ({ children }) => {
       if (!peerCallRef.current) peerCallRef.current = call;
       setupCallListeners(call, participantId);
       try {
-        const connection = peerRef.current.connect(peerId);
+        const connection = peerRef.current.connect(remotePeerId);
         setupDataConnection(connection);
       } catch (error) {
         console.warn('[PeerCall] Data connection failed:', error);
@@ -558,7 +563,7 @@ export const VoiceProvider = ({ children }) => {
   const syncPeerCalls = (participants) => {
     const activeParticipants = participants.filter((participant) => participant.status === 'active');
     activeParticipants.forEach((participant) => {
-      if (participant.user_id !== user?.id) startPeerCall(participant.user_id);
+      if (participant.user_id !== user?.id) startPeerCall(participant);
     });
     pendingCallRef.current.forEach((call, peerId) => {
       const participantId = getPeerUserId(peerId);
@@ -631,8 +636,8 @@ export const VoiceProvider = ({ children }) => {
   useEffect(() => {
     if (!user?.id) return;
 
-    const myId = user.id.replace(/-/g, '');
-    const p = new Peer(myId, {
+    const myPeerId = crypto.randomUUID().replace(/-/g, '');
+    const p = new Peer(myPeerId, {
       debug: 1,
       config: {
         iceServers: [
@@ -659,9 +664,10 @@ export const VoiceProvider = ({ children }) => {
     });
 
     peerRef.current = p;
+    peerIdRef.current = myPeerId;
 
     p.on('open', () => {
-      console.log('[Peer] ready, id =', myId);
+      console.log('[Peer] ready');
       setPeerReady(true);
     });
 
@@ -690,7 +696,10 @@ export const VoiceProvider = ({ children }) => {
 
     return () => {
       p.destroy();
-      peerRef.current = null;
+      if (peerRef.current === p) {
+        peerRef.current = null;
+        peerIdRef.current = null;
+      }
       setPeerReady(false);
     };
   }, [user?.id]);
@@ -698,7 +707,7 @@ export const VoiceProvider = ({ children }) => {
   const refreshCallParticipants = async (roomId) => {
     const { data: rows, error } = await supabase
       .from('call_participants')
-      .select('user_id, status, invited_by, noise_suppression_enabled')
+      .select('user_id, status, invited_by, noise_suppression_enabled, peer_id')
       .eq('room_id', roomId);
     if (error) {
       console.error('[Call] Failed to load participants:', error);
@@ -921,6 +930,7 @@ export const VoiceProvider = ({ children }) => {
           {
             room_id: room.id,
             user_id: user.id,
+            peer_id: peerIdRef.current,
             invited_by: user.id,
             status: 'active',
             noise_suppression_enabled: noiseSuppressionActiveRef.current,
@@ -945,7 +955,7 @@ export const VoiceProvider = ({ children }) => {
       dbCallIdRef.current = room.id;
       localMembershipActiveRef.current = true;
       const participants = [
-        { user_id: user.id, status: 'active', noise_suppression_enabled: noiseSuppressionActiveRef.current, user },
+        { user_id: user.id, peer_id: peerIdRef.current, status: 'active', noise_suppression_enabled: noiseSuppressionActiveRef.current, user },
         { user_id: friend.id, status: 'invited', noise_suppression_enabled: true, user: friend },
       ];
       callParticipantsRef.current = participants;
@@ -997,6 +1007,7 @@ export const VoiceProvider = ({ children }) => {
         .from('call_participants')
         .update({
           status: 'active',
+          peer_id: peerIdRef.current,
           noise_suppression_enabled: noiseSuppressionActiveRef.current,
           joined_at: new Date().toISOString(),
         })
