@@ -1,4 +1,4 @@
-import React, { useState, useEffect } from 'react';
+import { useState, useEffect } from 'react';
 
 export default function DiscordUpdater({ onFinished }) {
   const [status, setStatus] = useState('checking'); // 'checking' | 'found' | 'downloading' | 'installing' | 'upToDate' | 'ready'
@@ -26,6 +26,7 @@ export default function DiscordUpdater({ onFinished }) {
 
   useEffect(() => {
     let isMounted = true;
+    let progressTimer;
 
     async function checkForUpdates() {
       // 1. هل يعمل التطبيق داخل بيئة Tauri للديسكتوب؟
@@ -75,6 +76,15 @@ export default function DiscordUpdater({ onFinished }) {
             switch (event.event) {
               case 'Started':
                 contentLength = event.data.contentLength || 0;
+                if (contentLength > 0) {
+                  clearInterval(progressTimer);
+                  progressTimer = undefined;
+                  setProgress(0);
+                } else {
+                  progressTimer = setInterval(() => {
+                    setProgress((current) => Math.min(current + 2, 95));
+                  }, 250);
+                }
                 break;
               case 'Progress':
                 downloaded += event.data.chunkLength;
@@ -85,9 +95,16 @@ export default function DiscordUpdater({ onFinished }) {
                   setProgress(percent);
                   setStatusText(`Downloading Update... ${percent}%`);
                   setDownloadStats(`${dlMb} MB / ${totalMb} MB`);
+                } else if (!progressTimer) {
+                  progressTimer = setInterval(() => {
+                    setProgress((current) => Math.min(current + 2, 95));
+                  }, 250);
                 }
                 break;
               case 'Finished':
+                clearInterval(progressTimer);
+                progressTimer = undefined;
+                setProgress(100);
                 setStatus('installing');
                 setStatusText('Installing update & restarting...');
                 break;
@@ -95,6 +112,8 @@ export default function DiscordUpdater({ onFinished }) {
           });
 
           // إعادة تشغيل التطبيق بالنسخة الجديدة فوراً
+          clearInterval(progressTimer);
+          setProgress(100);
           setStatusText('Update complete! Restarting Discord Lite...');
           setTimeout(async () => {
             await relaunch();
@@ -110,6 +129,7 @@ export default function DiscordUpdater({ onFinished }) {
           }, 900);
         }
       } catch (err) {
+        clearInterval(progressTimer);
         console.warn('[Updater] Check failed or offline:', err);
         if (!isMounted) return;
         setStatus('ready');
@@ -125,6 +145,7 @@ export default function DiscordUpdater({ onFinished }) {
 
     return () => {
       isMounted = false;
+      clearInterval(progressTimer);
     };
   }, [onFinished]);
 
@@ -182,7 +203,7 @@ export default function DiscordUpdater({ onFinished }) {
       </div>
 
       {/* Progress Bar with Discord Theme */}
-      {status === 'downloading' ? (
+      {status === 'downloading' || status === 'installing' ? (
         <div className="flex flex-col items-center gap-1.5 mb-4">
           <div className="w-72 h-2.5 bg-[#1e1f22] rounded-full overflow-hidden p-0.5 border border-[#2b2d31] shadow-inner">
             <div
@@ -190,7 +211,7 @@ export default function DiscordUpdater({ onFinished }) {
               style={{ width: `${progress}%` }}
             />
           </div>
-          {downloadStats && (
+          {status === 'downloading' && downloadStats && (
             <span className="text-[11px] text-[#949ba4] font-medium">
               {downloadStats}
             </span>
