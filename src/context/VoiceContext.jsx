@@ -904,6 +904,10 @@ export const VoiceProvider = ({ children }) => {
   // ─────────────────────────────────────────────────────
   const startCall = async (friend, isVideo = false) => {
     if (!friend?.id || !user?.id) return;
+    if (friend.id === user.id) {
+      toast.warning("You can't start a call with yourself.");
+      return;
+    }
     if (activeCallRef.current || incomingCallRef.current) {
       toast.warning('You are already in a call.');
       return;
@@ -1126,16 +1130,16 @@ export const VoiceProvider = ({ children }) => {
         }
 
         if (!wasIncoming) {
-          const { data: activeMembers, error: membersError } = await supabase
+          const { data: roomParticipants, error: membersError } = await supabase
             .from('call_participants')
-            .select('user_id')
-            .eq('room_id', roomId)
-            .eq('status', 'active');
+            .select('user_id, status')
+            .eq('room_id', roomId);
           if (membersError) {
             console.error('[endCall] Failed to check active participants:', membersError);
             return;
           }
-          if (activeMembers.length === 0) {
+          const activeMembers = roomParticipants.filter((participant) => participant.status === 'active');
+          if (roomParticipants.length <= 2 || activeMembers.length === 0) {
             const { error: roomError } = await supabase
               .from('call_rooms')
               .update({ status: 'ended' })
