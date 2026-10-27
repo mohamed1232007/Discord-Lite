@@ -22,7 +22,7 @@ import SettingsPage from './SettingsPage';
 
 const BACKEND_URL = import.meta.env.VITE_BACKEND_URL || 'http://localhost:5000/api';
 
-export default function DMSidebar({ selectedChat, setSelectedChat, onOpenAuth }) {
+export default function DMSidebar({ selectedChat, setSelectedChat, onShowCall, onOpenAuth }) {
   const { user, token, onlineUsers, signOut } = useAuth();
   const toast = useToast();
   const {
@@ -249,9 +249,14 @@ export default function DMSidebar({ selectedChat, setSelectedChat, onOpenAuth })
                 </div>
                 {/* Titles */}
                 <div className="min-w-0">
-                  <div className="text-[#23a55a] text-xs font-bold leading-tight tracking-wide">
-                    Voice Connected
-                  </div>
+                  <button
+                    type="button"
+                    onClick={onShowCall}
+                    className="text-left text-[#23a55a] text-xs font-bold leading-tight tracking-wide hover:text-white transition cursor-pointer"
+                    title="Return to voice call"
+                  >
+                    Voice Call
+                  </button>
                   <div className="text-[11px] text-[#949ba4] truncate leading-tight mt-0.5">
                     {callFriendName} · {activeParticipantCount} in voice
                   </div>

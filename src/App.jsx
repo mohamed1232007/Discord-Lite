@@ -108,6 +108,7 @@ function MainApp() {
             <DMSidebar 
               selectedChat={selectedChat} 
               setSelectedChat={setSelectedChat} 
+              onShowCall={() => setSelectedChat(null)}
               onOpenAuth={() => changeView('login')}
             />
 
