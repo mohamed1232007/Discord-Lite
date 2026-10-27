@@ -55,8 +55,12 @@ export default function SettingsPage({ onClose }) {
   const groups = [...new Set(SIDEBAR_ITEMS.map(i => i.group))];
 
   // helper: label for selected device
-  const micLabel    = microphones.find(m => m.deviceId === selectedMic)?.label    || 'Default Microphone';
-  const speakerLabel = speakers.find(s => s.deviceId === selectedSpeaker)?.label  || 'Default Speaker';
+  const micLabel = selectedMic === 'default'
+    ? 'Default Microphone'
+    : microphones.find((mic) => mic.deviceId === selectedMic)?.label || 'Saved microphone unavailable';
+  const speakerLabel = selectedSpeaker === 'default'
+    ? 'Default Speaker'
+    : speakers.find((speaker) => speaker.deviceId === selectedSpeaker)?.label || 'Saved speaker unavailable';
 
   return (
     <div className="fixed inset-0 z-[200] flex bg-[#111214] animate-in fade-in duration-150">
@@ -163,6 +167,9 @@ export default function SettingsPage({ onClose }) {
                     />
                   </div>
                 </div>
+                <p className="text-[11px] text-[#80848e] -mt-5 mb-6">
+                  Microphone and speaker selections are saved on this computer.
+                </p>
 
                 {/* ── NOISE SUPPRESSION section ── */}
                 <div className="h-px bg-[#3f4147] mb-6" />
@@ -317,11 +324,23 @@ function DeviceDropdown({ devices, selected, label, onSelect, onRefresh, iconTyp
       {open && (
         <div className="absolute top-[calc(100%+4px)] left-0 right-0 bg-[#111214] border border-[#3f4147] rounded-lg shadow-2xl z-50 overflow-hidden animate-in fade-in slide-in-from-top-1 duration-100">
           <div className="max-h-52 overflow-y-auto discord-scrollbar py-1">
-            {devices.length === 0 ? (
-              <div className="px-3 py-2 text-xs text-[#80848e] flex items-center gap-2">
-                <DeviceIcon size={13} />
-                {placeholder}
+            <button
+              type="button"
+              onClick={() => { onSelect('default'); setOpen(false); }}
+              className={`w-full flex items-center justify-between gap-3 px-3 py-2 text-sm cursor-pointer transition-colors text-left ${
+                selected === 'default'
+                  ? 'bg-[#5865f2]/20 text-white'
+                  : 'text-[#dbdee1] hover:bg-[#2b2d31] hover:text-white'
+              }`}
+            >
+              <div className="flex items-center gap-2.5 min-w-0">
+                <DeviceIcon size={13} className={selected === 'default' ? 'text-[#5865f2] shrink-0' : 'text-[#80848e] shrink-0'} />
+                <span className="truncate">{placeholder}</span>
               </div>
+              {selected === 'default' && <Check size={14} className="text-[#5865f2] shrink-0" />}
+            </button>
+            {devices.length === 0 ? (
+              null
             ) : (
               devices.map(device => {
                 const isSel = device.deviceId === selected;

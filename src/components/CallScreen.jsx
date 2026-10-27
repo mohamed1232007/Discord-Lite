@@ -1,4 +1,5 @@
 import { useRef, useEffect, useState } from 'react';
+import { invoke } from '@tauri-apps/api/core';
 import {
   PhoneOff,
   Mic, MicOff,
@@ -11,7 +12,8 @@ import {
   MessageSquare,
   UserPlus,
   VolumeX,
-  Headphones
+  Headphones,
+  X
 } from 'lucide-react';
 import { useVoice } from '../context/VoiceContext';
 import { useAuth } from '../context/AuthContext';
@@ -44,6 +46,8 @@ export default function CallScreen() {
     toggleDeafen,
     toggleCamera,
     toggleScreenShare,
+    startScreenShareFromSource,
+    listScreenSources,
     isNoiseSuppressionEnabled,
     isNoiseSuppressionActive,
     toggleNoiseSuppression,
@@ -64,6 +68,11 @@ export default function CallScreen() {
   const [showMicMenu, setShowMicMenu] = useState(false);
   const [showSpeakerMenu, setShowSpeakerMenu] = useState(false);
   const [showInviteModal, setShowInviteModal] = useState(false);
+  const [showScreenPicker, setShowScreenPicker] = useState(false);
+  const [screenSources, setScreenSources] = useState([]);
+  const [screenSourceLoading, setScreenSourceLoading] = useState(false);
+  const [screenSourceError, setScreenSourceError] = useState('');
+  const [screenPreviewMap, setScreenPreviewMap] = useState({});
   const [friends, setFriends] = useState([]);
   const [selectedInviteIds, setSelectedInviteIds] = useState([]);
   const [loadingFriends, setLoadingFriends] = useState(false);
@@ -84,6 +93,78 @@ export default function CallScreen() {
     document.addEventListener('mousedown', handleClickOutside);
     return () => document.removeEventListener('mousedown', handleClickOutside);
   }, []);
+
+  const isDesktopApp = () => typeof window !== 'undefined' && (
+    !!window.__TAURI_INTERNALS__
+    || window.location.protocol === 'tauri:'
+    || navigator.userAgent.includes('Tauri')
+  );
+
+  const loadScreenPreview = async (source) => {
+    const key = `${source.kind}:${source.id}`;
+    if (screenPreviewMap[key]) return;
+    try {
+      const imageUrl = await invoke('capture_source_preview', {
+        kind: source.kind,
+        id: Number(source.id),
+      });
+      if (imageUrl) {
+        setScreenPreviewMap((previous) => ({ ...previous, [key]: imageUrl }));
+      }
+    } catch (error) {
+      console.warn('[ScreenPicker] Preview failed:', error);
+    }
+  };
+
+  const loadScreenSources = async () => {
+    if (!isDesktopApp()) {
+      setScreenSourceError('Screen picker is available in the desktop app only.');
+      return;
+    }
+    setScreenSourceLoading(true);
+    setScreenSourceError('');
+    try {
+      const sources = await listScreenSources();
+      setScreenSources(Array.isArray(sources) ? sources : []);
+      await Promise.all((Array.isArray(sources) ? sources : []).slice(0, 8).map((source) => loadScreenPreview(source)));
+    } catch (error) {
+      console.error('[ScreenPicker] Could not load screen sources:', error);
+      setScreenSourceError('Could not load available screens.');
+      setScreenSources([]);
+    } finally {
+      setScreenSourceLoading(false);
+    }
+  };
+
+  useEffect(() => {
+    const handlePickerRequest = () => {
+      setShowScreenPicker(true);
+      loadScreenSources();
+    };
+
+    window.addEventListener('discord-lite-open-screen-picker', handlePickerRequest);
+    return () => window.removeEventListener('discord-lite-open-screen-picker', handlePickerRequest);
+  }, []);
+
+  const handleScreenShareClick = async () => {
+    if (isScreenSharing) {
+      toggleScreenShare();
+      return;
+    }
+    setShowScreenPicker(true);
+    await loadScreenSources();
+  };
+
+  const handleSourceSelection = async (source) => {
+    setShowScreenPicker(false);
+    if (!source) return;
+    try {
+      await startScreenShareFromSource(source);
+    } catch (error) {
+      console.error('[ScreenPicker] Could not start source share:', error);
+      toast.error('Could not start screen sharing from the selected source.');
+    }
+  };
   
   // توصيل البث المحلي (كاميرا أو شير سكرين)
   useEffect(() => {
@@ -318,7 +399,7 @@ export default function CallScreen() {
                   <span>You are sharing your screen</span>
                   <button
                     type="button"
-                    onClick={toggleScreenShare}
+                    onClick={handleScreenShareClick}
                     className="ml-2 bg-black/40 hover:bg-black/60 px-2 py-0.5 rounded text-[11px] font-semibold transition cursor-pointer"
                   >
                     Stop
@@ -662,7 +743,7 @@ export default function CallScreen() {
           </div>
 
           {/* SCREEN SHARE */}
-          <button type="button" onClick={toggleScreenShare}
+          <button type="button" onClick={handleScreenShareClick}
             className={`p-2.5 rounded-lg transition cursor-pointer ${
               isScreenSharing ? 'text-[#23a55a] bg-[#23a55a]/20 hover:bg-[#23a55a]/30' : 'text-[#dbdee1] hover:text-white hover:bg-[#1e1f22]'
             }`}
@@ -704,6 +785,95 @@ export default function CallScreen() {
             <Maximize2 size={20} />
           </button>
         </div>
+        {showScreenPicker && (
+          <div className="fixed inset-0 z-50 flex items-center justify-center bg-black/80 p-4">
+            <div className="w-full max-w-5xl max-h-[80vh] overflow-hidden rounded-2xl border border-[#2b2d31] bg-[#111214] shadow-2xl">
+              <div className="flex items-center justify-between border-b border-[#2b2d31] px-5 py-4">
+                <div>
+                  <h2 className="text-lg font-bold text-white">Choose what to share</h2>
+                  <p className="mt-1 text-xs text-[#949ba4]">Pick a window or screen from the desktop app.</p>
+                </div>
+                <button
+                  type="button"
+                  onClick={() => setShowScreenPicker(false)}
+                  className="rounded-lg p-2 text-[#949ba4] hover:bg-[#2b2d31] hover:text-white"
+                  aria-label="Close screen-picker"
+                >
+                  <X size={18} />
+                </button>
+              </div>
+
+              <div className="max-h-[calc(80vh-72px)] overflow-y-auto p-4">
+                {screenSourceLoading ? (
+                  <div className="flex min-h-52 items-center justify-center text-sm text-[#949ba4]">Loading available screens...</div>
+                ) : screenSourceError ? (
+                  <div className="flex min-h-52 flex-col items-center justify-center gap-3 text-center">
+                    <p className="text-sm text-[#f5a623]">{screenSourceError}</p>
+                    <button
+                      type="button"
+                      onClick={loadScreenSources}
+                      className="rounded-lg bg-[#5865f2] px-3 py-2 text-sm font-medium text-white hover:bg-[#4752c4]"
+                    >
+                      Retry
+                    </button>
+                  </div>
+                ) : screenSources.length === 0 ? (
+                  <div className="flex min-h-52 flex-col items-center justify-center gap-3 text-center">
+                    <p className="text-sm text-[#949ba4]">No active screens or windows were detected.</p>
+                    <button
+                      type="button"
+                      onClick={loadScreenSources}
+                      className="rounded-lg border border-[#2b2d31] px-3 py-2 text-sm text-[#dbdee1] hover:bg-[#1e1f22]"
+                    >
+                      Refresh list
+                    </button>
+                  </div>
+                ) : (
+                  <div className="grid grid-cols-1 gap-3 md:grid-cols-2 xl:grid-cols-3">
+                    {screenSources.map((source) => {
+                      const key = `${source.kind}:${source.id}`;
+                      const preview = screenPreviewMap[key];
+                      const isWindow = source.kind === 'window';
+                      return (
+                        <button
+                          key={key}
+                          type="button"
+                          onMouseEnter={() => loadScreenPreview(source)}
+                          onClick={() => handleSourceSelection(source)}
+                          className="group overflow-hidden rounded-xl border border-[#2b2d31] bg-[#17191c] text-left transition hover:border-[#5865f2] hover:bg-[#1d1f23]"
+                        >
+                          <div className="relative h-36 overflow-hidden border-b border-[#2b2d31] bg-black">
+                            {preview ? (
+                              <img src={preview} alt={source.name} className="h-full w-full object-cover" />
+                            ) : (
+                              <div className="flex h-full items-center justify-center text-[10px] uppercase tracking-[0.18em] text-[#80848e]">
+                                {isWindow ? 'Window' : 'Screen'}
+                              </div>
+                            )}
+                            <div className="absolute inset-0 bg-gradient-to-t from-black/60 via-transparent to-transparent opacity-0 transition group-hover:opacity-100" />
+                            <div className="absolute bottom-2 left-2 rounded bg-[#5865f2] px-2 py-1 text-[10px] font-bold uppercase tracking-wide text-white">
+                              {isWindow ? 'Window' : 'Screen'}
+                            </div>
+                          </div>
+                          <div className="space-y-1 p-3">
+                            <div className="truncate text-sm font-semibold text-white">{source.name}</div>
+                            <div className="text-xs text-[#949ba4]">
+                              {source.width} × {source.height}
+                              {source.is_primary ? ' · Primary display' : ''}
+                            </div>
+                            <div className="mt-2 inline-flex rounded bg-[#23a55a]/15 px-2 py-1 text-[11px] font-semibold text-[#23a55a]">
+                              Share
+                            </div>
+                          </div>
+                        </button>
+                      );
+                    })}
+                  </div>
+                )}
+              </div>
+            </div>
+          </div>
+        )}
         {showInviteModal && (
           <div className="fixed inset-0 z-50 flex items-center justify-center bg-black/70 p-4">
             <div className="w-full max-w-md rounded-xl border border-[#2b2d31] bg-[#111214] p-5 shadow-2xl">
