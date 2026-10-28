@@ -4,8 +4,12 @@ import { useAuth } from './AuthContext';
 import { useToast } from './ToastContext';
 import { supabase } from '../services/supabaseClient';
 import { applyRnnoiseDenoise } from '../services/denoiser';
+import { callApi } from '../services/callApi';
+import { useCallRoomSync } from '../hooks/useCallRoomSync';
 
 const VoiceContext = createContext({});
+const TURN_USERNAME = import.meta.env.VITE_TURN_USERNAME;
+const TURN_CREDENTIAL = import.meta.env.VITE_TURN_CREDENTIAL;
 const SELECTED_MIC_STORAGE_KEY = 'dis_lite_selected_mic';
 const SELECTED_SPEAKER_STORAGE_KEY = 'dis_lite_selected_speaker';
 const PARTICIPANT_AUDIO_STORAGE_KEY = 'dis_lite_participant_audio';
@@ -44,7 +48,7 @@ const getSavedAudioDevice = (storageKey) => {
 };
 
 export const VoiceProvider = ({ children }) => {
-  const { user } = useAuth();
+  const { user, token } = useAuth();
   const toast = useToast();
 
   // ── State ──────────────────────────────────────────────
@@ -108,6 +112,15 @@ export const VoiceProvider = ({ children }) => {
   const callParticipantsRef = useRef(callParticipants);
   const localMembershipActiveRef = useRef(false);
   const endCallCleanupRef = useRef(null);
+  const turnWarningShownRef = useRef(false);
+
+  const warnIfTurnIsUnavailable = () => {
+    if (TURN_USERNAME && TURN_CREDENTIAL) return;
+    if (!turnWarningShownRef.current) {
+      toast.warning('TURN is not configured. Calls may fail on restrictive networks.');
+      turnWarningShownRef.current = true;
+    }
+  };
 
   const updateRemoteCallState = (participantId, changes) => {
     const state = {
@@ -174,7 +187,6 @@ export const VoiceProvider = ({ children }) => {
       });
     });
     conn.on('data', (data) => {
-      console.log('[PeerData received]', data);
       applyRemoteCallState(data);
     });
     conn.on('close', () => {
@@ -228,12 +240,10 @@ export const VoiceProvider = ({ children }) => {
 
     const ch = supabase.channel(`call-media-${activeCall.roomId}`)
       .on('broadcast', { event: 'media_state' }, ({ payload }) => {
-        console.log('[MediaSignal received]', payload);
-      mediaSignalHandlersRef.current?.applyRemoteCallState(payload);
+        mediaSignalHandlersRef.current?.applyRemoteCallState(payload);
       })
       .subscribe((status) => {
-        console.log('[call-media status]:', status);
-      if (status === 'SUBSCRIBED') mediaSignalHandlersRef.current?.publishCallState();
+        if (status === 'SUBSCRIBED') mediaSignalHandlersRef.current?.publishCallState();
       });
 
     mediaChannelRef.current = ch;
@@ -467,12 +477,10 @@ export const VoiceProvider = ({ children }) => {
         // استبدال في الـ WebRTC Sender
         await replacePeerTrack('audio', finalAudioTrack);
         if (activeCall.roomId) {
-          const { error } = await supabase
-            .from('call_participants')
-            .update({ noise_suppression_enabled: noiseSuppressionActiveRef.current })
-            .eq('room_id', activeCall.roomId)
-            .eq('user_id', user.id);
-          if (error) console.error('[changeMicrophone] Failed to update noise status:', error);
+          await callApi(token, `/${activeCall.roomId}/noise`, {
+            method: 'PATCH',
+            body: { enabled: noiseSuppressionActiveRef.current },
+          });
         }
         setSelectedMic(deviceId);
         toast.success('Microphone changed successfully.');
@@ -682,7 +690,6 @@ export const VoiceProvider = ({ children }) => {
       if (blankTrack) {
         processedStream.addTrack(blankTrack);
       }
-      console.log('[acquireMediaStream] final stream tracks:', processedStream.getTracks().map(t => `${t.kind}(enabled=${t.enabled},readyState=${t.readyState})`));
       return processedStream;
     } catch (e) {
       console.error('[Media] microphone unavailable:', e);
@@ -709,7 +716,6 @@ export const VoiceProvider = ({ children }) => {
   // Helper: Attach remote stream to <audio>/<video>
   // ─────────────────────────────────────────────────────
   const attachRemote = async (stream, participantId) => {
-    console.log('[Remote] attaching stream, tracks:', stream.getTracks().length);
     if (!remoteStreamsRef.current.some((entry) => entry.userId === participantId)) {
       const nextStreams = [...remoteStreamsRef.current, { userId: participantId, stream }];
       remoteStreamsRef.current = nextStreams;
@@ -809,7 +815,6 @@ export const VoiceProvider = ({ children }) => {
 
   const setupCallListeners = (call, participantId) => {
     call.on('stream', async (remote) => {
-      console.log('[PeerCall] got remote stream ✓, tracks:', remote.getTracks().map(t => `${t.kind}(enabled=${t.enabled})`));
       if (remote.getAudioTracks().length === 0) {
         console.error('[PeerCall] Remote participant provided no audio track:', participantId);
         toast.error('A call participant has no active microphone audio.');
@@ -818,21 +823,9 @@ export const VoiceProvider = ({ children }) => {
       setCallStatus('connected');
       await configurePeerAudio(call);
 
-      try {
-        const pc = call.peerConnection;
-        if (pc) {
-          console.log('[PeerCall] transceivers:', pc.getTransceivers().map((transceiver) => (
-            `${transceiver.receiver?.track?.kind}:${transceiver.direction}/${transceiver.currentDirection}`
-          )));
-        }
-      } catch (e) {
-        console.warn('[PeerCall] transceiver direction warning:', e);
-      }
-
       await attachRemote(remote, participantId);
     });
     call.on('close', () => {
-      console.log('[PeerCall] closed for participant:', participantId);
       if (peerCallsRef.current.get(participantId) === call) {
         peerCallsRef.current.delete(participantId);
       }
@@ -875,27 +868,28 @@ export const VoiceProvider = ({ children }) => {
 
     const myPeerId = crypto.randomUUID().replace(/-/g, '');
     const p = new Peer(myPeerId, {
-      debug: 1,
+      debug: 0,
       config: {
         iceServers: [
           { urls: 'stun:stun.l.google.com:19302' },
           { urls: 'stun:stun1.l.google.com:19302' },
-          { urls: 'stun:stun.relay.metered.ca:80' },
-          {
-            urls: 'turn:global.relay.metered.ca:80',
-            username: 'openrelayproject',
-            credential: 'openrelayproject',
-          },
-          {
-            urls: 'turn:global.relay.metered.ca:443',
-            username: 'openrelayproject',
-            credential: 'openrelayproject',
-          },
-          {
-            urls: 'turn:global.relay.metered.ca:443?transport=tcp',
-            username: 'openrelayproject',
-            credential: 'openrelayproject',
-          },
+          { urls: 'stun:stun.relay.metered.ca:80' },          ...(TURN_USERNAME && TURN_CREDENTIAL ? [
+            {
+              urls: 'turn:global.relay.metered.ca:80',
+              username: TURN_USERNAME,
+              credential: TURN_CREDENTIAL,
+            },
+            {
+              urls: 'turn:global.relay.metered.ca:443',
+              username: TURN_USERNAME,
+              credential: TURN_CREDENTIAL,
+            },
+            {
+              urls: 'turn:global.relay.metered.ca:443?transport=tcp',
+              username: TURN_USERNAME,
+              credential: TURN_CREDENTIAL,
+            },
+          ] : []),
         ]
       }
     });
@@ -904,7 +898,6 @@ export const VoiceProvider = ({ children }) => {
     peerIdRef.current = myPeerId;
 
     p.on('open', () => {
-      console.log('[Peer] ready');
       setPeerReady(true);
     });
 
@@ -919,7 +912,6 @@ export const VoiceProvider = ({ children }) => {
 
     // مكالمة واردة من PeerJS — نحفظها فقط، الرد يحصل في answerCall
     p.on('call', (call) => {
-      console.log('[Peer] incoming PeerJS call from:', call.peer);
       const participantId = getPeerUserId(call.peer);
       pendingCallRef.current.set(call.peer, call);
       if (localMembershipActiveRef.current && participantId) answerPeerCall(call, participantId);
@@ -927,7 +919,6 @@ export const VoiceProvider = ({ children }) => {
 
     // اتصال بيانات P2P وارد للإشارات اللحظية
     p.on('connection', (conn) => {
-      console.log('[Peer] incoming data connection from:', conn.peer);
       setupDataConnection(conn);
     });
 
@@ -941,46 +932,34 @@ export const VoiceProvider = ({ children }) => {
     };
   }, [user?.id]);
 
-  const refreshCallParticipants = async (roomId) => {
-    const { data: rows, error } = await supabase
-      .from('call_participants')
-      .select('user_id, status, invited_by, noise_suppression_enabled, peer_id')
-      .eq('room_id', roomId);
-    if (error) {
+  const refreshCallParticipants = async (roomId, roomData = null) => {
+    let participants;
+    try {
+      ({ participants } = roomData || await callApi(token, `/${roomId}`));
+    } catch (error) {
       console.error('[Call] Failed to load participants:', error);
       toast.error('Could not load the call participants.');
       return [];
     }
 
-    const userIds = rows.map((row) => row.user_id);
-    const { data: profiles, error: profileError } = userIds.length
-      ? await supabase.from('users').select('id, username, display_name, avatar_url').in('id', userIds)
-      : { data: [], error: null };
-    if (profileError) {
-      console.error('[Call] Failed to load participant profiles:', profileError);
-      toast.error('Could not load the call participants.');
-      return [];
-    }
-
-    const participants = rows.map((row) => ({
-      ...row,
-      user: profiles.find((profile) => profile.id === row.user_id) || { id: row.user_id },
-    }));
+    const participantsChanged = JSON.stringify(callParticipantsRef.current) !== JSON.stringify(participants);
     callParticipantsRef.current = participants;
-    setCallParticipants(participants);
+    if (participantsChanged) setCallParticipants(participants);
     if (participants.some((participant) => (
       participant.user_id !== user?.id && participant.status === 'active'
     ))) {
       setCallStatus('connected');
     }
-    setActiveCall((previous) => previous?.roomId === roomId
-      ? {
+    if (participantsChanged) {
+      setActiveCall((previous) => previous?.roomId === roomId
+        ? {
           ...previous,
           participants,
           friend: participants.find((participant) => participant.user_id !== user?.id)?.user || previous.friend,
         }
-      : previous);
-    syncPeerCalls(participants);
+        : previous);
+      syncPeerCalls(participants);
+    }
 
     participants
       .filter((participant) => participant.status !== 'active')
@@ -998,45 +977,22 @@ export const VoiceProvider = ({ children }) => {
     return participants;
   };
 
-  const triggerIncoming = async (participant) => {
+  const triggerIncoming = async (invitation) => {
     if (activeCallRef.current || incomingCallRef.current || pendingIncomingRoomRef.current) return;
-    pendingIncomingRoomRef.current = participant.room_id;
+    pendingIncomingRoomRef.current = invitation.roomId;
 
     try {
-      const { data: room, error: roomError } = await supabase
-        .from('call_rooms')
-        .select('id, created_by, status')
-        .eq('id', participant.room_id)
-        .eq('status', 'active')
-        .maybeSingle();
-      if (roomError) throw roomError;
-      if (!room) {
-        const { error } = await supabase
-          .from('call_participants')
-          .update({ status: 'left' })
-          .eq('room_id', participant.room_id)
-          .eq('user_id', user.id)
-          .eq('status', 'invited');
-        if (error) console.error('[Call] Failed to clear expired invitation:', error);
-        return;
-      }
-
-      const { data: caller, error: callerError } = await supabase
-        .from('users')
-        .select('id, username, display_name, avatar_url')
-        .eq('id', participant.invited_by || room.created_by)
-        .maybeSingle();
-      if (callerError) throw callerError;
-
+      const { room } = await callApi(token, `/${invitation.roomId}`);
+      if (room.status !== 'active') return;
       const incoming = {
-        callId: room.id,
-        roomId: room.id,
-        callerId: caller?.id || room.created_by,
-        callerName: caller?.display_name || caller?.username || 'Friend',
-        caller,
+        callId: invitation.roomId,
+        roomId: invitation.roomId,
+        callerId: invitation.callerId,
+        callerName: invitation.callerName,
+        caller: invitation.caller,
       };
       incomingCallRef.current = incoming;
-      dbCallIdRef.current = room.id;
+      dbCallIdRef.current = invitation.roomId;
       setIncomingCall(incoming);
     } catch (error) {
       console.error('[Call] Failed to prepare incoming call:', error);
@@ -1045,96 +1001,16 @@ export const VoiceProvider = ({ children }) => {
     }
   };
 
-  // ─────────────────────────────────────────────────────
-  // 2. Watch incoming room invitations
-  // ─────────────────────────────────────────────────────
-  useEffect(() => {
-    if (!user?.id) return;
-
-    const checkForIncoming = async () => {
-      if (activeCallRef.current || incomingCallRef.current) return;
-      const { data, error } = await supabase
-        .from('call_participants')
-        .select('room_id, invited_by')
-        .eq('user_id', user.id)
-        .eq('status', 'invited')
-        .order('created_at', { ascending: false })
-        .limit(1);
-      if (error) {
-        console.error('[Call] Failed to check incoming calls:', error);
-        return;
-      }
-      if (data?.[0]) await triggerIncoming(data[0]);
-    };
-
-    checkForIncoming();
-    const poll = setInterval(checkForIncoming, 2500);
-    const ch = supabase
-      .channel(`call-invitations-${user.id}`)
-      .on('postgres_changes', {
-        event: 'INSERT',
-        schema: 'public',
-        table: 'call_participants',
-        filter: `user_id=eq.${user.id}`,
-      }, (payload) => {
-        if (payload.new?.status === 'invited') triggerIncoming(payload.new);
-      })
-      .subscribe();
-
-    return () => {
-      clearInterval(poll);
-      supabase.removeChannel(ch);
-    };
-  }, [user?.id]);
-
-  // ─────────────────────────────────────────────────────
-  // 3. Synchronize room members and media state
-  // ─────────────────────────────────────────────────────
-  useEffect(() => {
-    const roomId = activeCall?.roomId;
-    if (!roomId || !user?.id) return;
-
-    const refreshTimer = window.setTimeout(() => refreshCallParticipants(roomId), 0);
-    const ch = supabase
-      .channel(`call-room-${roomId}`)
-      .on('postgres_changes', {
-        event: '*',
-        schema: 'public',
-        table: 'call_participants',
-        filter: `room_id=eq.${roomId}`,
-      }, () => refreshCallParticipants(roomId))
-      .on('postgres_changes', {
-        event: 'UPDATE',
-        schema: 'public',
-        table: 'call_rooms',
-        filter: `id=eq.${roomId}`,
-      }, ({ new: room }) => {
-        if (room?.status === 'ended') endCallCleanupRef.current?.(false);
-      })
-      .subscribe();
-
-    return () => {
-      window.clearTimeout(refreshTimer);
-      supabase.removeChannel(ch);
-    };
-  }, [activeCall?.roomId, user?.id]);
-
-  useEffect(() => {
-    const roomId = incomingCall?.roomId;
-    if (!roomId) return undefined;
-    const ch = supabase
-      .channel(`incoming-call-room-${roomId}`)
-      .on('postgres_changes', {
-        event: 'UPDATE',
-        schema: 'public',
-        table: 'call_rooms',
-        filter: `id=eq.${roomId}`,
-      }, ({ new: room }) => {
-        if (room?.status === 'ended') endCallCleanupRef.current?.(true);
-      })
-      .subscribe();
-    return () => { supabase.removeChannel(ch); };
-  }, [incomingCall?.roomId]);
+  useCallRoomSync({
+    token,
+    userId: user?.id,
+    activeRoomId: activeCall?.roomId,
+    incomingRoomId: incomingCall?.roomId,
+    onInvitation: triggerIncoming,
+    onActiveRoom: (roomData) => refreshCallParticipants(roomData.room.id, roomData),
+    onIncomingRoomEnded: () => endCallCleanupRef.current?.(true),
+    onActiveRoomEnded: () => endCallCleanupRef.current?.(false),
+  });
 
   // ─────────────────────────────────────────────────────
   // 4. Start a direct call; participants can invite others after joining
@@ -1154,44 +1030,19 @@ export const VoiceProvider = ({ children }) => {
       return;
     }
 
+    warnIfTurnIsUnavailable();
     try {
       const stream = await acquireMediaStream({ includeVideo: isVideo });
       localStreamRef.current = stream;
 
-      const { data: room, error: roomError } = await supabase
-        .from('call_rooms')
-        .insert([{ created_by: user.id }])
-        .select('id')
-        .single();
-      if (roomError || !room) throw roomError || new Error('The call room was not created.');
-
-      const { error: participantError } = await supabase
-        .from('call_participants')
-        .insert([
-          {
-            room_id: room.id,
-            user_id: user.id,
-            peer_id: peerIdRef.current,
-            invited_by: user.id,
-            status: 'active',
-            noise_suppression_enabled: noiseSuppressionActiveRef.current === true,
-            joined_at: new Date().toISOString(),
-          },
-          {
-            room_id: room.id,
-            user_id: friend.id,
-            invited_by: user.id,
-            status: 'invited',
-          },
-        ]);
-      if (participantError) {
-          const { error: endRoomError } = await supabase
-            .from('call_rooms')
-            .update({ status: 'ended' })
-            .eq('id', room.id);
-          if (endRoomError) console.error('[startCall] Failed to close incomplete room:', endRoomError);
-          throw participantError;
-        }
+      const { room } = await callApi(token, '', {
+        method: 'POST',
+        body: {
+          targetUserId: friend.id,
+          peerId: peerIdRef.current,
+          noiseSuppressionEnabled: noiseSuppressionActiveRef.current === true,
+        },
+      });
 
       dbCallIdRef.current = room.id;
       localMembershipActiveRef.current = true;
@@ -1238,15 +1089,11 @@ export const VoiceProvider = ({ children }) => {
   const answerCall = async () => {
     const inc = incomingCallRef.current;
     if (!inc) return;
+    warnIfTurnIsUnavailable();
     let acceptedMembership = false;
 
     try {
-      const { data: room, error: roomError } = await supabase
-        .from('call_rooms')
-        .select('id, status')
-        .eq('id', inc.roomId)
-        .maybeSingle();
-      if (roomError) throw roomError;
+      const { room } = await callApi(token, `/${inc.roomId}`);
       if (room?.status !== 'active') {
         toast.warning('This call has already ended.');
         endCallCleanup(false);
@@ -1255,21 +1102,13 @@ export const VoiceProvider = ({ children }) => {
 
       const stream = await acquireMediaStream();
       localStreamRef.current = stream;
-      const { data: membership, error } = await supabase
-        .from('call_participants')
-        .update({
-          status: 'active',
-          peer_id: peerIdRef.current,
-          noise_suppression_enabled: noiseSuppressionActiveRef.current,
-          joined_at: new Date().toISOString(),
-        })
-        .eq('room_id', inc.roomId)
-        .eq('user_id', user.id)
-        .eq('status', 'invited')
-        .select('user_id')
-        .maybeSingle();
-      if (error) throw error;
-      if (!membership) throw new Error('This call invitation is no longer active.');
+      await callApi(token, `/${inc.roomId}/answer`, {
+        method: 'POST',
+        body: {
+          peerId: peerIdRef.current,
+          noiseSuppressionEnabled: noiseSuppressionActiveRef.current,
+        },
+      });
       acceptedMembership = true;
 
       dbCallIdRef.current = inc.roomId;
@@ -1310,12 +1149,10 @@ export const VoiceProvider = ({ children }) => {
       toast.error(callErrorMessage(err, 'Could not join the call'));
       if (acceptedMembership) {
         try {
-          const { error } = await supabase
-            .from('call_participants')
-            .update({ status: 'left' })
-            .eq('room_id', inc.roomId)
-            .eq('user_id', user.id);
-          if (error) console.error('[answerCall] Failed to roll back membership:', error);
+          await callApi(token, `/${inc.roomId}/leave`, {
+            method: 'POST',
+            body: { status: 'left' },
+          });
         } catch (rollbackError) {
           console.error('[answerCall] Membership rollback failed:', rollbackError);
         }
@@ -1347,24 +1184,24 @@ export const VoiceProvider = ({ children }) => {
       return;
     }
 
-    const { error } = await supabase
-      .from('call_participants')
-      .upsert(newFriends.map((friend) => ({
-        room_id: roomId,
-        user_id: friend.id,
-        invited_by: user.id,
-        status: 'invited',
-        noise_suppression_enabled: false,
-        created_at: new Date().toISOString(),
-      })), { onConflict: 'room_id,user_id' });
-    if (error) {
+    let invitedCount;
+    try {
+      ({ invited: invitedCount } = await callApi(token, `/${roomId}/invitations`, {
+        method: 'POST',
+        body: { userIds: newFriends.map((friend) => friend.id) },
+      }));
+    } catch (error) {
       console.error('[Call] Failed to invite participants:', error);
       toast.error('Could not invite those friends.');
       return;
     }
 
     await refreshCallParticipants(roomId);
-    toast.success(`Invited ${newFriends.length} friend${newFriends.length === 1 ? '' : 's'}.`);
+    if (invitedCount === 0) {
+      toast.info('Those friends are already in this call or invited.');
+      return;
+    }
+    toast.success(`Invited ${invitedCount} friend${invitedCount === 1 ? '' : 's'}.`);
   };
 
   // ─────────────────────────────────────────────────────
@@ -1373,40 +1210,17 @@ export const VoiceProvider = ({ children }) => {
   const endCallCleanup = (updateDb = true) => {
     const roomId = dbCallIdRef.current;
     const wasIncoming = !!incomingCallRef.current && !activeCallRef.current;
-    console.log('[endCall] leaving room:', roomId);
-
     if (updateDb && roomId && user?.id) {
       (async () => {
         const status = wasIncoming ? 'declined' : 'left';
-        const { error: leaveError } = await supabase
-          .from('call_participants')
-          .update({ status })
-          .eq('room_id', roomId)
-          .eq('user_id', user.id)
-          .in('status', ['active', 'invited']);
-        if (leaveError) {
-          console.error('[endCall] Failed to update participant status:', leaveError);
+        try {
+          await callApi(token, `/${roomId}/leave`, {
+            method: 'POST',
+            body: { status },
+          });
+        } catch (error) {
+          console.error('[endCall] Failed to update participant status:', error);
           toast.error('Could not update your call status.');
-          return;
-        }
-
-        if (!wasIncoming) {
-          const { data: roomParticipants, error: membersError } = await supabase
-            .from('call_participants')
-            .select('user_id, status')
-            .eq('room_id', roomId);
-          if (membersError) {
-            console.error('[endCall] Failed to check active participants:', membersError);
-            return;
-          }
-          const activeMembers = roomParticipants.filter((participant) => participant.status === 'active');
-          if (roomParticipants.length <= 2 || activeMembers.length === 0) {
-            const { error: roomError } = await supabase
-              .from('call_rooms')
-              .update({ status: 'ended' })
-              .eq('id', roomId);
-            if (roomError) console.error('[endCall] Failed to end empty room:', roomError);
-          }
         }
       })().catch((err) => {
         console.error('[endCall] Failed to update call room:', err);
@@ -1427,10 +1241,7 @@ export const VoiceProvider = ({ children }) => {
         rawMicStreamRef.current = null;
       }
       if (localStreamRef.current) {
-        localStreamRef.current.getTracks().forEach(t => {
-          t.stop();
-          console.log('[endCall] stopped local track:', t.kind);
-        });
+        localStreamRef.current.getTracks().forEach((t) => t.stop());
       }
     } catch (e) {
       console.warn('[endCall] error stopping local tracks:', e);
@@ -1441,7 +1252,6 @@ export const VoiceProvider = ({ children }) => {
         screenStreamRef.current.getTracks().forEach(t => {
           if (t.kind === 'video') t.onended = null;
           t.stop();
-          console.log('[endCall] stopped screen track:', t.kind);
         });
       }
     } catch (e) {
@@ -1537,7 +1347,6 @@ export const VoiceProvider = ({ children }) => {
       track.enabled = !next;
     });
     publishCallState({ muted: next });
-    console.log('[toggleMute] muted =', next);
   };
 
   // ─────────────────────────────────────────────────────
@@ -1564,7 +1373,6 @@ export const VoiceProvider = ({ children }) => {
       track.enabled = !muted;
     });
     publishCallState({ muted, deafened: next });
-    console.log('[toggleDeafen] deafened =', next);
   };
 
   // ─────────────────────────────────────────────────────
@@ -1795,15 +1603,10 @@ export const VoiceProvider = ({ children }) => {
 
           await replacePeerTrack('audio', finalAudioTrack);
 
-          const { error } = await supabase
-            .from('call_participants')
-            .update({ noise_suppression_enabled: noiseSuppressionActiveRef.current })
-            .eq('room_id', activeCall.roomId)
-            .eq('user_id', user.id);
-          if (error) {
-            console.error('[toggleNoiseSuppression] Failed to update status:', error);
-            toast.error('Could not update noise-suppression status for the call.');
-          }
+          await callApi(token, `/${activeCall.roomId}/noise`, {
+            method: 'PATCH',
+            body: { enabled: noiseSuppressionActiveRef.current },
+          });
           const updatedParticipants = callParticipantsRef.current.map((participant) => (
             participant.user_id === user.id
               ? { ...participant, noise_suppression_enabled: noiseSuppressionActiveRef.current }

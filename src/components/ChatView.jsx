@@ -1,4 +1,4 @@
-import { useState, useEffect, useRef } from 'react';
+import { useState, useEffect, useRef, useCallback } from 'react';
 import { 
   Phone, 
   Video, 
@@ -13,7 +13,6 @@ import {
 } from 'lucide-react';
 import { useAuth } from '../context/AuthContext';
 import { useVoice } from '../context/VoiceContext';
-import { supabase } from '../services/supabaseClient';
 
 const BACKEND_URL = import.meta.env.VITE_BACKEND_URL || 'http://localhost:5000/api';
 
@@ -34,7 +33,7 @@ export default function ChatView({ user, onBack, onCallStarted }) {
     messagesEndRef.current?.scrollIntoView({ behavior: 'smooth' });
   };
 
-  const fetchMessages = async () => {
+  const fetchMessages = useCallback(async () => {
     if (!token || !user?.id) return;
     try {
       const res = await fetch(`${BACKEND_URL}/messages/direct/${user.id}`, {
@@ -42,56 +41,45 @@ export default function ChatView({ user, onBack, onCallStarted }) {
       });
       if (res.ok) {
         const data = await res.json();
-        setMessages(data.messages || []);
+        const nextMessages = data.messages || [];
+        setMessages((previousMessages) => {
+          const unchanged = previousMessages.length === nextMessages.length
+            && previousMessages.every((message, index) => message.id === nextMessages[index]?.id);
+          return unchanged ? previousMessages : nextMessages;
+        });
       }
     } catch (err) {
       console.error('Error fetching messages:', err);
     } finally {
       setLoading(false);
     }
-  };
+  }, [token, user.id]);
 
   useEffect(() => {
-    fetchMessages();
-  }, [user.id, token]);
+    const timer = window.setTimeout(fetchMessages, 0);
+    return () => window.clearTimeout(timer);
+  }, [fetchMessages]);
 
   useEffect(() => {
     scrollToBottom();
   }, [messages]);
 
-  // Realtime DMs
+  // Refresh direct messages through the authenticated API.
   useEffect(() => {
     if (!currentUser?.id || !user?.id) return;
 
-    const channel = supabase
-      .channel(`direct_messages:${currentUser.id}-${user.id}`)
-      .on(
-        'postgres_changes',
-        {
-          event: 'INSERT',
-          schema: 'public',
-          table: 'direct_messages'
-        },
-        (payload) => {
-          const newMsg = payload.new;
-          const isRelevant = 
-            (newMsg.sender_id === currentUser.id && newMsg.receiver_id === user.id) ||
-            (newMsg.sender_id === user.id && newMsg.receiver_id === currentUser.id);
-
-          if (isRelevant) {
-            setMessages((prev) => {
-              if (prev.some(m => m.id === newMsg.id)) return prev;
-              return [...prev, newMsg];
-            });
-          }
-        }
-      )
-      .subscribe();
-
-    return () => {
-      supabase.removeChannel(channel);
+    const poll = window.setInterval(() => {
+      if (!document.hidden) fetchMessages();
+    }, 3000);
+    const handleVisibilityChange = () => {
+      if (!document.hidden) fetchMessages();
     };
-  }, [currentUser?.id, user?.id]);
+    document.addEventListener('visibilitychange', handleVisibilityChange);
+    return () => {
+      window.clearInterval(poll);
+      document.removeEventListener('visibilitychange', handleVisibilityChange);
+    };
+  }, [currentUser?.id, user?.id, fetchMessages]);
 
   const handleSend = async (e) => {
     e.preventDefault();
