@@ -134,8 +134,9 @@ function MainApp() {
 
             {/* 3. الجانب الأيمن: شاشة الكول الكبيرة أو الشات أو الأصدقاء */}
             {activeCall && !isChatVisible ? (
-              <CallScreen onOpenChat={() => {
-                if (activeCall.friend?.id) openChat(activeCall.friend);
+              <CallScreen onOpenChat={(participant) => {
+                const chatUser = participant?.id ? participant : activeCall.friend;
+                if (chatUser?.id) openChat(chatUser);
               }} />
             ) : selectedChat ? (
               <ChatView

@@ -11,7 +11,8 @@ import {
   MessageSquare,
   UserPlus,
   VolumeX,
-  Headphones
+  Headphones,
+  MoreHorizontal
 } from 'lucide-react';
 import { useVoice } from '../context/VoiceContext';
 import { useAuth } from '../context/AuthContext';
@@ -26,6 +27,9 @@ export default function CallScreen({ onOpenChat }) {
     remoteCallStates,
     remoteStreams,
     remoteAudioElementsRef,
+    participantAudioSettings,
+    setParticipantVolume,
+    setParticipantMuted,
     callStatus,      // 'calling' | 'connected'
     isMuted,
     isDeafened,
@@ -64,12 +68,14 @@ export default function CallScreen({ onOpenChat }) {
   const [showMicMenu, setShowMicMenu] = useState(false);
   const [showSpeakerMenu, setShowSpeakerMenu] = useState(false);
   const [showInviteModal, setShowInviteModal] = useState(false);
+  const [openParticipantMenuId, setOpenParticipantMenuId] = useState(null);
   const [friends, setFriends] = useState([]);
   const [selectedInviteIds, setSelectedInviteIds] = useState([]);
   const [loadingFriends, setLoadingFriends] = useState(false);
 
   const micMenuRef = useRef(null);
   const speakerMenuRef = useRef(null);
+  const participantMenuRef = useRef(null);
 
   // إغلاق قوائم اختيار الأجهزة عند الضغط خارجها
   useEffect(() => {
@@ -79,6 +85,9 @@ export default function CallScreen({ onOpenChat }) {
       }
       if (speakerMenuRef.current && !speakerMenuRef.current.contains(e.target)) {
         setShowSpeakerMenu(false);
+      }
+      if (participantMenuRef.current && !participantMenuRef.current.contains(e.target)) {
+        setOpenParticipantMenuId(null);
       }
     };
     document.addEventListener('mousedown', handleClickOutside);
@@ -113,15 +122,16 @@ export default function CallScreen({ onOpenChat }) {
       const element = remoteAudioElementsRef.current.get(userId);
       if (!element) return;
       if (element.srcObject !== stream) element.srcObject = stream;
-      element.muted = isDeafened;
-      element.volume = isDeafened ? 0 : 1;
+      const participantSettings = participantAudioSettings[userId];
+      element.muted = isDeafened || participantSettings?.muted === true;
+      element.volume = element.muted ? 0 : participantSettings?.volume ?? 1;
       if (typeof element.setSinkId === 'function') {
         element.setSinkId(selectedSpeaker === 'default' ? '' : selectedSpeaker)
           .catch((error) => console.warn('[Audio] Could not set output device:', error));
       }
       element.play().catch((error) => console.warn('[Audio] play blocked:', error));
     });
-  }, [remoteStreams, isDeafened, remoteAudioElementsRef, selectedSpeaker]);
+  }, [remoteStreams, isDeafened, remoteAudioElementsRef, selectedSpeaker, participantAudioSettings]);
 
   // عداد مدة المكالمة
   useEffect(() => {
@@ -156,7 +166,6 @@ export default function CallScreen({ onOpenChat }) {
 
   const friendName = activeCall.friend?.display_name || activeCall.friend?.username || 'Friend';
   const myName     = currentUser?.display_name || currentUser?.username || 'Me';
-  const myUser     = currentUser?.username || 'me';
 
   const activeParticipants = callParticipants.filter((participant) => participant.status === 'active');
   const remoteScreenParticipant = activeParticipants.find((participant) => (
@@ -196,6 +205,75 @@ export default function CallScreen({ onOpenChat }) {
   const getRemoteStream = (participantId) => (
     remoteStreams.find((entry) => entry.userId === participantId)?.stream
   );
+  const renderParticipantMenu = (participant, participantName) => {
+    if (participant.user_id === currentUser?.id) return null;
+
+    const settings = participantAudioSettings[participant.user_id] || {};
+    const volume = Number.isFinite(settings.volume) ? settings.volume : 1;
+    const isMutedForMe = settings.muted === true;
+    const isOpen = openParticipantMenuId === participant.user_id;
+
+    return (
+      <div
+        ref={isOpen ? participantMenuRef : null}
+        className="absolute bottom-3 right-3 z-30"
+        onClick={(event) => event.stopPropagation()}
+      >
+        <button
+          type="button"
+          onClick={() => setOpenParticipantMenuId(isOpen ? null : participant.user_id)}
+          className="flex h-9 w-9 items-center justify-center rounded-lg border border-white/10 bg-black/75 text-white shadow-lg transition hover:bg-[#2b2d31]"
+          title={`Options for ${participantName}`}
+          aria-label={`Options for ${participantName}`}
+          aria-expanded={isOpen}
+        >
+          <MoreHorizontal size={20} />
+        </button>
+        {isOpen && (
+          <div className="absolute bottom-11 right-0 w-64 rounded-xl border border-[#3b3d44] bg-[#17181c] p-2.5 text-[#dbdee1] shadow-2xl">
+            <div className="truncate px-2 pb-2 text-sm font-semibold text-white">{participantName}</div>
+            <button
+              type="button"
+              onClick={() => {
+                if (participant.user) onOpenChat?.(participant.user);
+                setOpenParticipantMenuId(null);
+              }}
+              className="flex w-full items-center gap-2 rounded-md px-2 py-2 text-left text-sm hover:bg-[#272930]"
+            >
+              <MessageSquare size={16} />
+              Message
+            </button>
+            <div className="my-2 border-t border-[#303239]" />
+            <label className="block px-2 pt-1 text-sm font-medium">User Volume</label>
+            <div className="flex items-center gap-2 px-2 py-2">
+              <input
+                type="range"
+                min="0"
+                max="100"
+                step="1"
+                value={Math.round(volume * 100)}
+                onChange={(event) => setParticipantVolume(participant.user_id, Number(event.target.value) / 100)}
+                className="h-1.5 min-w-0 flex-1 cursor-pointer accent-[#5865f2]"
+                aria-label={`${participantName} volume`}
+              />
+              <span className="w-9 text-right text-xs tabular-nums text-[#b5bac1]">
+                {Math.round(volume * 100)}%
+              </span>
+            </div>
+            <label className="flex cursor-pointer items-center justify-between rounded-md px-2 py-2 text-sm hover:bg-[#272930]">
+              <span>Mute</span>
+              <input
+                type="checkbox"
+                checked={isMutedForMe}
+                onChange={(event) => setParticipantMuted(participant.user_id, event.target.checked)}
+                className="h-4 w-4 accent-[#5865f2]"
+              />
+            </label>
+          </div>
+        )}
+      </div>
+    );
+  };
 
   const openInviteModal = async () => {
     setSelectedInviteIds([]);
@@ -414,7 +492,7 @@ export default function CallScreen({ onOpenChat }) {
               const remoteVideoStream = isLocal ? null : getRemoteStream(participant.user_id);
               const cameraVisible = !!state.camera && (isLocal || !!remoteVideoStream);
               return (
-                <div key={participant.user_id} className="relative w-full h-full min-h-56 max-h-[500px] bg-[#08080a] border border-[#1e1f22] rounded-2xl flex items-center justify-center overflow-hidden shadow-2xl">
+                <div key={participant.user_id} className="group relative w-full h-full min-h-56 max-h-[500px] bg-[#08080a] border border-[#1e1f22] rounded-2xl flex items-center justify-center overflow-hidden shadow-2xl">
                   {cameraVisible && (
                     <video
                       ref={(element) => setVideoStream(
@@ -444,6 +522,7 @@ export default function CallScreen({ onOpenChat }) {
                   <div className="absolute bottom-3 left-3 bg-black/80 backdrop-blur-sm text-white text-xs px-2.5 py-1 rounded-md font-medium border border-[#1e1f22]">
                     {name}{state.muted ? ' · Muted' : ''}{state.deafened ? ' · Deafened' : ''}
                   </div>
+                  {renderParticipantMenu(participant, name)}
                 </div>
               );
             })}
@@ -464,42 +543,36 @@ export default function CallScreen({ onOpenChat }) {
                 const participantName = isLocal
                   ? myName
                   : participantUser.display_name || participantUser.username || 'Friend';
-                const participantUsername = isLocal
-                  ? myUser
-                  : participantUser.username || 'user';
                 const participantState = getParticipantState(participant);
                 const muted = participantState.muted;
                 const noiseActive = participantState.noiseSuppressionActive;
 
                 return (
-                  <div key={participant.user_id} className="w-64 min-h-72 bg-[#111214] border border-[#1e1f22] rounded-2xl flex flex-col items-center justify-center p-6 shadow-2xl relative transition-all hover:border-[#2b2d31]">
-                    <div className={`w-28 h-28 rounded-full bg-[#1e1f22] border-4 flex items-center justify-center text-white text-3xl font-bold shadow-xl ${
-                      muted ? 'border-[#f23f43]' : 'border-[#23a55a] ring-4 ring-[#23a55a]/20'
-                    }`}>
-                      {participantUser.avatar_url ? (
-                        <img src={participantUser.avatar_url} alt={participantName} className="w-full h-full rounded-full object-cover" />
-                      ) : (
-                        participantName.substring(0, 2).toUpperCase()
-                      )}
-                    </div>
-                    <div className="mt-4 text-center">
-                      <div className="text-white font-bold text-base truncate max-w-[200px]">
-                        {participantName}{isLocal ? ' (You)' : ''}
-                      </div>
-                      <div className="text-[#80848e] text-xs mt-0.5 truncate max-w-[200px]">@{participantUsername}</div>
-                      <div className={`text-xs mt-2.5 font-medium ${muted ? 'text-[#f23f43]' : 'text-[#23a55a]'}`}>
-                        {muted ? 'Muted' : 'Connected'}
-                      </div>
-                      <div className={`text-[10px] mt-2 ${noiseActive ? 'text-[#23a55a]' : 'text-[#80848e]'}`}>
-                        {noiseActive ? 'AI noise suppression active' : 'Built-in noise suppression requested'}
-                      </div>
-                    </div>
-                    {participantState.deafened && (
-                      <span className="absolute bottom-3 left-3 text-xs bg-black/80 px-2 py-1 rounded-md border border-[#1e1f22]">🔇 Deafened</span>
-                    )}
-                    {muted && (
-                      <span className="absolute bottom-3 right-3 text-xs bg-black/80 px-2 py-1 rounded-md border border-[#1e1f22] text-[#f23f43]">🔇 Muted</span>
-                    )}
+                  <div key={participant.user_id} className="group relative w-full max-w-[620px] min-h-[220px] max-h-[420px] aspect-video overflow-hidden rounded-xl border border-[#1e1f22] bg-[#09080c] shadow-2xl transition-all hover:border-[#2b2d31]">
+                        <div className={`absolute left-1/2 top-1/2 flex h-20 w-20 -translate-x-1/2 -translate-y-1/2 items-center justify-center overflow-hidden rounded-full bg-[#1e1f22] text-2xl font-bold text-white shadow-xl ring-2 ${
+                          muted ? 'ring-[#f23f43]' : 'ring-[#23a55a]'
+                        }`}>
+                          {participantUser.avatar_url ? (
+                            <img src={participantUser.avatar_url} alt={participantName} className="w-full h-full rounded-full object-cover" />
+                          ) : (
+                            participantName.substring(0, 2).toUpperCase()
+                          )}
+                        </div>
+                        <div className="absolute bottom-3 left-3 max-w-[70%] truncate rounded-md bg-black/75 px-2.5 py-1.5 text-sm font-medium text-white backdrop-blur-sm">
+                          {participantName}{isLocal ? ' (You)' : ''}
+                        </div>
+                        <div
+                          className={`absolute left-3 top-3 rounded-md bg-black/70 px-2 py-1 text-[10px] font-medium backdrop-blur-sm ${
+                            muted ? 'text-[#f23f43]' : noiseActive ? 'text-[#23a55a]' : 'text-[#b5bac1]'
+                          }`}
+                          title={noiseActive ? 'AI noise suppression is active' : 'AI noise suppression is not active'}
+                        >
+                          {muted ? 'Muted' : noiseActive ? 'Noise suppression on' : 'Connected'}
+                        </div>
+                        {renderParticipantMenu(participant, participantName)}
+                        {participantState.deafened && (
+                          <span className="absolute right-14 top-3 rounded-md border border-[#1e1f22] bg-black/80 px-2 py-1 text-xs">🔇 Deafened</span>
+                        )}
                   </div>
                 );
               })}

@@ -8,6 +8,31 @@ import { applyRnnoiseDenoise } from '../services/denoiser';
 const VoiceContext = createContext({});
 const SELECTED_MIC_STORAGE_KEY = 'dis_lite_selected_mic';
 const SELECTED_SPEAKER_STORAGE_KEY = 'dis_lite_selected_speaker';
+const PARTICIPANT_AUDIO_STORAGE_KEY = 'dis_lite_participant_audio';
+
+const getSavedParticipantAudio = () => {
+  try {
+    const savedSettings = JSON.parse(window.localStorage.getItem(PARTICIPANT_AUDIO_STORAGE_KEY) || '{}');
+    if (!savedSettings || typeof savedSettings !== 'object' || Array.isArray(savedSettings)) return {};
+
+    return Object.fromEntries(
+      Object.entries(savedSettings)
+        .filter(([, settings]) => settings && typeof settings === 'object')
+        .map(([userId, settings]) => [
+          userId,
+          {
+            volume: Number.isFinite(settings.volume)
+              ? Math.min(1, Math.max(0, settings.volume))
+              : 1,
+            muted: settings.muted === true,
+          },
+        ]),
+    );
+  } catch (error) {
+    console.warn('[Audio] Could not restore participant volume settings:', error);
+    return {};
+  }
+};
 
 const getSavedAudioDevice = (storageKey) => {
   try {
@@ -43,6 +68,7 @@ export const VoiceProvider = ({ children }) => {
   const [speakers,        setSpeakers]       = useState([]);
   const [selectedMic,     setSelectedMic]    = useState(() => getSavedAudioDevice(SELECTED_MIC_STORAGE_KEY));
   const [selectedSpeaker, setSelectedSpeaker]= useState(() => getSavedAudioDevice(SELECTED_SPEAKER_STORAGE_KEY));
+  const [participantAudioSettings, setParticipantAudioSettings] = useState(getSavedParticipantAudio);
   const [isNoiseSuppressionEnabled, setIsNoiseSuppressionEnabled] = useState(true);
   const [isNoiseSuppressionActive, setIsNoiseSuppressionActive] = useState(false);
 
@@ -360,6 +386,37 @@ export const VoiceProvider = ({ children }) => {
       console.error('[Audio] Could not save speaker selection:', error);
     }
   }, [selectedSpeaker]);
+
+  useEffect(() => {
+    try {
+      window.localStorage.setItem(PARTICIPANT_AUDIO_STORAGE_KEY, JSON.stringify(participantAudioSettings));
+    } catch (error) {
+      console.error('[Audio] Could not save participant volume settings:', error);
+    }
+  }, [participantAudioSettings]);
+
+  const setParticipantVolume = (participantId, volume) => {
+    if (!participantId || !Number.isFinite(volume)) return;
+    const nextVolume = Math.min(1, Math.max(0, volume));
+    setParticipantAudioSettings((previous) => ({
+      ...previous,
+      [participantId]: {
+        ...previous[participantId],
+        volume: nextVolume,
+      },
+    }));
+  };
+
+  const setParticipantMuted = (participantId, muted) => {
+    if (!participantId) return;
+    setParticipantAudioSettings((previous) => ({
+      ...previous,
+      [participantId]: {
+        ...previous[participantId],
+        muted: !!muted,
+      },
+    }));
+  };
 
   // دالة تغيير المايك
   const changeMicrophone = async (deviceId) => {
@@ -1787,6 +1844,9 @@ export const VoiceProvider = ({ children }) => {
       speakers,
       selectedMic,
       selectedSpeaker,
+      participantAudioSettings,
+      setParticipantVolume,
+      setParticipantMuted,
       changeMicrophone,
       changeSpeaker,
       updateAudioDevices,
