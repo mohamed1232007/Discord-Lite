@@ -481,7 +481,7 @@ export default function CallScreen({ onOpenChat }) {
           </div>
         ) : isVideoCallActive ? (
           /* حالة 2: عرض فيديو كل أعضاء المكالمة */
-          <div className="grid grid-cols-1 sm:grid-cols-2 xl:grid-cols-3 gap-4 w-full h-full max-w-6xl items-center justify-center overflow-y-auto">
+          <div className="grid grid-cols-1 sm:grid-cols-2 xl:grid-cols-3 auto-rows-max gap-4 w-full h-full max-w-6xl items-center justify-center overflow-y-auto">
             {activeParticipants.map((participant) => {
               const isLocal = participant.user_id === currentUser?.id;
               const participantUser = participant.user || {};
@@ -492,7 +492,7 @@ export default function CallScreen({ onOpenChat }) {
               const remoteVideoStream = isLocal ? null : getRemoteStream(participant.user_id);
               const cameraVisible = !!state.camera && (isLocal || !!remoteVideoStream);
               return (
-                <div key={participant.user_id} className="group relative w-full h-full min-h-56 max-h-[500px] bg-[#08080a] border border-[#1e1f22] rounded-2xl flex items-center justify-center overflow-hidden shadow-2xl">
+                <div key={participant.user_id} className="group relative aspect-video w-full min-h-[220px] max-h-[420px] bg-[#09080c] border border-[#1e1f22] rounded-xl flex items-center justify-center overflow-hidden shadow-2xl transition-all hover:border-[#2b2d31]">
                   {cameraVisible && (
                     <video
                       ref={(element) => setVideoStream(
@@ -507,7 +507,7 @@ export default function CallScreen({ onOpenChat }) {
                   )}
                   {!cameraVisible && (
                     <div className="flex flex-col items-center gap-3">
-                      <div className={`w-24 h-24 rounded-full bg-[#18191c] border-4 flex items-center justify-center text-white text-2xl font-bold shadow-xl ${
+                      <div                       className={`w-20 h-20 rounded-full bg-[#18191c] border-2 flex items-center justify-center text-white text-2xl font-bold shadow-xl ${
                         state.muted ? 'border-[#f23f43]' : 'border-[#23a55a]'
                       }`}>
                         {participantUser.avatar_url ? (
@@ -516,11 +516,15 @@ export default function CallScreen({ onOpenChat }) {
                           name.substring(0, 2).toUpperCase()
                         )}
                       </div>
-                      <span className="text-white font-semibold text-sm">{name}</span>
                     </div>
                   )}
-                  <div className="absolute bottom-3 left-3 bg-black/80 backdrop-blur-sm text-white text-xs px-2.5 py-1 rounded-md font-medium border border-[#1e1f22]">
-                    {name}{state.muted ? ' · Muted' : ''}{state.deafened ? ' · Deafened' : ''}
+                  <div className="absolute bottom-3 left-3 max-w-[70%] truncate rounded-md bg-black/75 px-2.5 py-1.5 text-sm font-medium text-white backdrop-blur-sm">
+                    {name}
+                  </div>
+                  <div className={`absolute left-3 top-3 rounded-md bg-black/70 px-2 py-1 text-[10px] font-medium backdrop-blur-sm ${
+                    state.muted ? 'text-[#f23f43]' : state.deafened ? 'text-[#f0b132]' : 'text-[#23a55a]'
+                  }`}>
+                    {state.muted ? 'Muted' : state.deafened ? 'Deafened' : cameraVisible ? 'Video on' : 'Connected'}
                   </div>
                   {renderParticipantMenu(participant, name)}
                 </div>
@@ -536,7 +540,7 @@ export default function CallScreen({ onOpenChat }) {
               <video ref={localVideoRef} autoPlay muted playsInline />
             </div>
 
-            <div className="flex flex-wrap items-center justify-center gap-5 w-full max-w-5xl">
+            <div className="grid grid-cols-1 gap-4 w-full max-w-[620px] max-h-full overflow-y-auto content-center">
               {activeParticipants.map((participant) => {
                 const isLocal = participant.user_id === currentUser?.id;
                 const participantUser = participant.user || {};
@@ -548,31 +552,31 @@ export default function CallScreen({ onOpenChat }) {
                 const noiseActive = participantState.noiseSuppressionActive;
 
                 return (
-                  <div key={participant.user_id} className="group relative w-full max-w-[620px] min-h-[220px] max-h-[420px] aspect-video overflow-hidden rounded-xl border border-[#1e1f22] bg-[#09080c] shadow-2xl transition-all hover:border-[#2b2d31]">
-                        <div className={`absolute left-1/2 top-1/2 flex h-20 w-20 -translate-x-1/2 -translate-y-1/2 items-center justify-center overflow-hidden rounded-full bg-[#1e1f22] text-2xl font-bold text-white shadow-xl ring-2 ${
-                          muted ? 'ring-[#f23f43]' : 'ring-[#23a55a]'
-                        }`}>
-                          {participantUser.avatar_url ? (
-                            <img src={participantUser.avatar_url} alt={participantName} className="w-full h-full rounded-full object-cover" />
-                          ) : (
-                            participantName.substring(0, 2).toUpperCase()
-                          )}
-                        </div>
-                        <div className="absolute bottom-3 left-3 max-w-[70%] truncate rounded-md bg-black/75 px-2.5 py-1.5 text-sm font-medium text-white backdrop-blur-sm">
-                          {participantName}{isLocal ? ' (You)' : ''}
-                        </div>
-                        <div
-                          className={`absolute left-3 top-3 rounded-md bg-black/70 px-2 py-1 text-[10px] font-medium backdrop-blur-sm ${
-                            muted ? 'text-[#f23f43]' : noiseActive ? 'text-[#23a55a]' : 'text-[#b5bac1]'
-                          }`}
-                          title={noiseActive ? 'AI noise suppression is active' : 'AI noise suppression is not active'}
-                        >
-                          {muted ? 'Muted' : noiseActive ? 'Noise suppression on' : 'Connected'}
-                        </div>
-                        {renderParticipantMenu(participant, participantName)}
-                        {participantState.deafened && (
-                          <span className="absolute right-14 top-3 rounded-md border border-[#1e1f22] bg-black/80 px-2 py-1 text-xs">🔇 Deafened</span>
-                        )}
+                  <div key={participant.user_id} className="group relative aspect-video w-full min-h-[220px] max-h-[420px] overflow-hidden rounded-xl border border-[#1e1f22] bg-[#09080c] shadow-2xl transition-all hover:border-[#2b2d31]">
+                    <div className={`absolute left-1/2 top-1/2 flex h-20 w-20 -translate-x-1/2 -translate-y-1/2 items-center justify-center overflow-hidden rounded-full border-2 bg-[#1e1f22] text-2xl font-bold text-white shadow-xl ${
+                      muted ? 'border-[#f23f43]' : 'border-[#23a55a]'
+                    }`}>
+                      {participantUser.avatar_url ? (
+                        <img src={participantUser.avatar_url} alt={participantName} className="w-full h-full rounded-full object-cover" />
+                      ) : (
+                        participantName.substring(0, 2).toUpperCase()
+                      )}
+                    </div>
+                    <div className="absolute bottom-3 left-3 max-w-[70%] truncate rounded-md bg-black/75 px-2.5 py-1.5 text-sm font-medium text-white backdrop-blur-sm">
+                      {participantName}{isLocal ? ' (You)' : ''}
+                    </div>
+                    <div
+                      className={`absolute left-3 top-3 rounded-md bg-black/70 px-2 py-1 text-[10px] font-medium backdrop-blur-sm ${
+                        muted ? 'text-[#f23f43]' : noiseActive ? 'text-[#23a55a]' : 'text-[#b5bac1]'
+                      }`}
+                      title={noiseActive ? 'AI noise suppression is active' : 'AI noise suppression is not active'}
+                    >
+                      {muted ? 'Muted' : noiseActive ? 'Noise suppression on' : 'Connected'}
+                    </div>
+                    {renderParticipantMenu(participant, participantName)}
+                    {participantState.deafened && (
+                      <span className="absolute right-14 top-3 rounded-md border border-[#1e1f22] bg-black/80 px-2 py-1 text-xs">🔇 Deafened</span>
+                    )}
                   </div>
                 );
               })}
