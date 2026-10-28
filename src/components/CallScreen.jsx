@@ -1,4 +1,5 @@
 import { useRef, useEffect, useState } from 'react';
+import { createPortal } from 'react-dom';
 import {
   PhoneOff,
   Mic, MicOff,
@@ -69,6 +70,7 @@ export default function CallScreen({ onOpenChat }) {
   const [showSpeakerMenu, setShowSpeakerMenu] = useState(false);
   const [showInviteModal, setShowInviteModal] = useState(false);
   const [openParticipantMenuId, setOpenParticipantMenuId] = useState(null);
+  const [participantMenuPosition, setParticipantMenuPosition] = useState(null);
   const [friends, setFriends] = useState([]);
   const [selectedInviteIds, setSelectedInviteIds] = useState([]);
   const [loadingFriends, setLoadingFriends] = useState(false);
@@ -76,6 +78,7 @@ export default function CallScreen({ onOpenChat }) {
   const micMenuRef = useRef(null);
   const speakerMenuRef = useRef(null);
   const participantMenuRef = useRef(null);
+  const participantMenuButtonsRef = useRef(new Map());
 
   // إغلاق قوائم اختيار الأجهزة عند الضغط خارجها
   useEffect(() => {
@@ -86,13 +89,19 @@ export default function CallScreen({ onOpenChat }) {
       if (speakerMenuRef.current && !speakerMenuRef.current.contains(e.target)) {
         setShowSpeakerMenu(false);
       }
-      if (participantMenuRef.current && !participantMenuRef.current.contains(e.target)) {
+      const activeMenuButton = participantMenuButtonsRef.current.get(openParticipantMenuId);
+      if (
+        participantMenuRef.current
+        && !participantMenuRef.current.contains(e.target)
+        && !activeMenuButton?.contains(e.target)
+      ) {
         setOpenParticipantMenuId(null);
+        setParticipantMenuPosition(null);
       }
     };
     document.addEventListener('mousedown', handleClickOutside);
     return () => document.removeEventListener('mousedown', handleClickOutside);
-  }, []);
+  }, [openParticipantMenuId]);
 
   // توصيل البث المحلي (كاميرا أو شير سكرين)
   useEffect(() => {
@@ -212,66 +221,107 @@ export default function CallScreen({ onOpenChat }) {
     const volume = Number.isFinite(settings.volume) ? settings.volume : 1;
     const isMutedForMe = settings.muted === true;
     const isOpen = openParticipantMenuId === participant.user_id;
+    const menu = isOpen && participantMenuPosition
+      ? createPortal(
+        <div
+          ref={participantMenuRef}
+          className="fixed z-[100] w-64 rounded-xl border border-[#353740] bg-[#17181c] p-2.5 text-[#dbdee1] shadow-[0_12px_40px_rgba(0,0,0,0.65)]"
+          style={{
+            top: Math.max(8, participantMenuPosition.top - 205),
+            right: Math.max(8, participantMenuPosition.right),
+            maxHeight: 'min(320px, calc(100vh - 16px))',
+            overflowY: 'auto',
+          }}
+          onClick={(event) => event.stopPropagation()}
+        >
+          <div className="truncate px-2 pb-2 text-sm font-semibold text-white">{participantName}</div>
+          <button
+            type="button"
+            onClick={() => {
+              if (participant.user) onOpenChat?.(participant.user);
+              setOpenParticipantMenuId(null);
+              setParticipantMenuPosition(null);
+            }}
+            className="flex w-full items-center gap-2 rounded-md px-2 py-2 text-left text-sm hover:bg-[#272930]"
+          >
+            <MessageSquare size={16} />
+            Message
+          </button>
+          <div className="my-2 border-t border-[#303239]" />
+          <div className="flex items-center justify-between px-2 pt-1">
+            <label
+              htmlFor={`participant-volume-${participant.user_id}`}
+              className="flex items-center gap-2 text-sm font-medium text-[#dbdee1]"
+            >
+              <Volume2 size={15} className="text-[#949ba4]" />
+              User volume
+            </label>
+            <span className="rounded-md bg-[#2b2d31] px-2 py-0.5 text-xs font-semibold tabular-nums text-white">
+              {Math.round(volume * 100)}%
+            </span>
+          </div>
+          <div className="px-2 pb-2 pt-3">
+            <input
+              id={`participant-volume-${participant.user_id}`}
+              type="range"
+              min="0"
+              max="100"
+              step="1"
+              value={Math.round(volume * 100)}
+              onChange={(event) => setParticipantVolume(participant.user_id, Number(event.target.value) / 100)}
+              className="participant-volume-slider w-full cursor-pointer"
+              style={{
+                background: `linear-gradient(to right, #5865f2 0%, #5865f2 ${volume * 100}%, #3b3d44 ${volume * 100}%, #3b3d44 100%)`,
+              }}
+              aria-label={`${participantName} volume`}
+            />
+          </div>
+          <label className="flex cursor-pointer items-center justify-between rounded-md px-2 py-2 text-sm hover:bg-[#272930]">
+            <span>Mute</span>
+            <input
+              type="checkbox"
+              checked={isMutedForMe}
+              onChange={(event) => setParticipantMuted(participant.user_id, event.target.checked)}
+              className="h-4 w-4 accent-[#5865f2]"
+            />
+          </label>
+        </div>,
+        document.body,
+      )
+      : null;
 
     return (
-      <div
-        ref={isOpen ? participantMenuRef : null}
-        className="absolute bottom-3 right-3 z-30"
-        onClick={(event) => event.stopPropagation()}
-      >
-        <button
-          type="button"
-          onClick={() => setOpenParticipantMenuId(isOpen ? null : participant.user_id)}
-          className="flex h-9 w-9 items-center justify-center rounded-lg border border-white/10 bg-black/75 text-white shadow-lg transition hover:bg-[#2b2d31]"
-          title={`Options for ${participantName}`}
-          aria-label={`Options for ${participantName}`}
-          aria-expanded={isOpen}
-        >
-          <MoreHorizontal size={20} />
-        </button>
-        {isOpen && (
-          <div className="absolute bottom-11 right-0 w-64 rounded-xl border border-[#3b3d44] bg-[#17181c] p-2.5 text-[#dbdee1] shadow-2xl">
-            <div className="truncate px-2 pb-2 text-sm font-semibold text-white">{participantName}</div>
-            <button
-              type="button"
-              onClick={() => {
-                if (participant.user) onOpenChat?.(participant.user);
+      <>
+        <div className="absolute bottom-3 right-3 z-30" onClick={(event) => event.stopPropagation()}>
+          <button
+            ref={(element) => {
+              if (element) participantMenuButtonsRef.current.set(participant.user_id, element);
+              else participantMenuButtonsRef.current.delete(participant.user_id);
+            }}
+            type="button"
+            onClick={(event) => {
+              if (isOpen) {
                 setOpenParticipantMenuId(null);
-              }}
-              className="flex w-full items-center gap-2 rounded-md px-2 py-2 text-left text-sm hover:bg-[#272930]"
-            >
-              <MessageSquare size={16} />
-              Message
-            </button>
-            <div className="my-2 border-t border-[#303239]" />
-            <label className="block px-2 pt-1 text-sm font-medium">User Volume</label>
-            <div className="flex items-center gap-2 px-2 py-2">
-              <input
-                type="range"
-                min="0"
-                max="100"
-                step="1"
-                value={Math.round(volume * 100)}
-                onChange={(event) => setParticipantVolume(participant.user_id, Number(event.target.value) / 100)}
-                className="h-1.5 min-w-0 flex-1 cursor-pointer accent-[#5865f2]"
-                aria-label={`${participantName} volume`}
-              />
-              <span className="w-9 text-right text-xs tabular-nums text-[#b5bac1]">
-                {Math.round(volume * 100)}%
-              </span>
-            </div>
-            <label className="flex cursor-pointer items-center justify-between rounded-md px-2 py-2 text-sm hover:bg-[#272930]">
-              <span>Mute</span>
-              <input
-                type="checkbox"
-                checked={isMutedForMe}
-                onChange={(event) => setParticipantMuted(participant.user_id, event.target.checked)}
-                className="h-4 w-4 accent-[#5865f2]"
-              />
-            </label>
-          </div>
-        )}
-      </div>
+                setParticipantMenuPosition(null);
+                return;
+              }
+              const rect = event.currentTarget.getBoundingClientRect();
+              setParticipantMenuPosition({
+                top: rect.top,
+                right: window.innerWidth - rect.right,
+              });
+              setOpenParticipantMenuId(participant.user_id);
+            }}
+            className="flex h-9 w-9 items-center justify-center rounded-lg border border-white/10 bg-black/75 text-white shadow-lg transition hover:bg-[#2b2d31]"
+            title={`Options for ${participantName}`}
+            aria-label={`Options for ${participantName}`}
+            aria-expanded={isOpen}
+          >
+            <MoreHorizontal size={20} />
+          </button>
+        </div>
+        {menu}
+      </>
     );
   };
 
@@ -540,7 +590,7 @@ export default function CallScreen({ onOpenChat }) {
               <video ref={localVideoRef} autoPlay muted playsInline />
             </div>
 
-            <div className="grid grid-cols-1 gap-4 w-full max-w-[620px] max-h-full overflow-y-auto content-center">
+            <div className="grid w-full max-w-[860px] grid-cols-1 place-items-center gap-3 sm:grid-cols-2">
               {activeParticipants.map((participant) => {
                 const isLocal = participant.user_id === currentUser?.id;
                 const participantUser = participant.user || {};
@@ -552,7 +602,7 @@ export default function CallScreen({ onOpenChat }) {
                 const noiseActive = participantState.noiseSuppressionActive;
 
                 return (
-                  <div key={participant.user_id} className="group relative aspect-video w-full min-h-[220px] max-h-[420px] overflow-hidden rounded-xl border border-[#1e1f22] bg-[#09080c] shadow-2xl transition-all hover:border-[#2b2d31]">
+                  <div key={participant.user_id} className="group relative aspect-video w-full max-w-[420px] overflow-hidden rounded-xl border border-[#1e1f22] bg-[#09080c] shadow-2xl transition-all hover:border-[#2b2d31]">
                     <div className={`absolute left-1/2 top-1/2 flex h-20 w-20 -translate-x-1/2 -translate-y-1/2 items-center justify-center overflow-hidden rounded-full border-2 bg-[#1e1f22] text-2xl font-bold text-white shadow-xl ${
                       muted ? 'border-[#f23f43]' : 'border-[#23a55a]'
                     }`}>
