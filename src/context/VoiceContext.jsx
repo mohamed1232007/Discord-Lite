@@ -10,6 +10,16 @@ import { useCallRoomSync } from '../hooks/useCallRoomSync';
 const VoiceContext = createContext({});
 const TURN_USERNAME = import.meta.env.VITE_TURN_USERNAME;
 const TURN_CREDENTIAL = import.meta.env.VITE_TURN_CREDENTIAL;
+// عناوين TURN مخصّصة (مفصولة بفواصل). لو فاضية نستخدم مزوّد relay.metered.ca الافتراضي.
+const TURN_URLS = (import.meta.env.VITE_TURN_URL || '')
+  .split(',')
+  .map((url) => url.trim())
+  .filter(Boolean);
+const DEFAULT_TURN_URLS = [
+  'turn:global.relay.metered.ca:80',
+  'turn:global.relay.metered.ca:443',
+  'turn:global.relay.metered.ca:443?transport=tcp',
+];
 const SELECTED_MIC_STORAGE_KEY = 'dis_lite_selected_mic';
 const SELECTED_SPEAKER_STORAGE_KEY = 'dis_lite_selected_speaker';
 const PARTICIPANT_AUDIO_STORAGE_KEY = 'dis_lite_participant_audio';
@@ -274,10 +284,8 @@ export const VoiceProvider = ({ children }) => {
         supabase.removeChannel(mediaChannelRef.current);
         mediaChannelRef.current = null;
       }
-      setIsRemoteScreenSharing(false);
-      setIsRemoteCamera(false);
+      // حالة المشاركة البعيدة تُصفَّر في endCallCleanup عند إنهاء المكالمة
       remoteCallStatesRef.current = {};
-      setRemoteCallStates({});
       return;
     }
 
@@ -417,9 +425,11 @@ export const VoiceProvider = ({ children }) => {
   };
 
   useEffect(() => {
-    updateAudioDevices();
+    // التأجيل لمهمة قصيرة يمنع setState المتزامن داخل الـ effect
+    const initialScan = window.setTimeout(updateAudioDevices, 0);
     navigator.mediaDevices?.addEventListener?.('devicechange', updateAudioDevices);
     return () => {
+      window.clearTimeout(initialScan);
       navigator.mediaDevices?.removeEventListener?.('devicechange', updateAudioDevices);
     };
   }, []);
@@ -473,15 +483,14 @@ export const VoiceProvider = ({ children }) => {
 
   // دالة تغيير المايك
   const changeMicrophone = async (deviceId) => {
-    // لو في مكالمة شغالة، نستبدل مسار الصوت فوراً مع تطبيق الـ RNNoise
+    // لو في مكالمة شغالة، نستبدل مسار الصوت فوراً مع تطبيق الـ RNNoise.
+    // مهم: نبني كل شيء جديد قبل أن نلمس السلسلة الشغالة، وإلا ينقطع الصوت
+    // للمشاركين طول مدة فتح المايك/تحميل موديلات إزالة الضوضاء.
     if (activeCall && localStreamRef.current) {
-      try {
-        denoiseGenerationRef.current += 1;
-        if (denoiseCleanupRef.current) {
-          denoiseCleanupRef.current();
-          denoiseCleanupRef.current = null;
-        }
+      const generation = denoiseGenerationRef.current + 1;
+      denoiseGenerationRef.current = generation;
 
+      try {
         const newRawStream = await navigator.mediaDevices.getUserMedia({
           audio: {
             deviceId: deviceId !== 'default' ? { exact: deviceId } : undefined,
@@ -492,45 +501,64 @@ export const VoiceProvider = ({ children }) => {
             sampleRate: 48000,
           },
         });
-        rawMicStreamRef.current?.getTracks().forEach((track) => track.stop());
-        rawMicStreamRef.current = newRawStream;
 
         let finalAudioTrack;
+        let nextCleanup = null;
+        let nextActive = false;
+
         if (isNoiseSuppressionEnabled) {
-          const { cleanStream, cleanup, isActive } = await applyRnnoiseDenoise(
-            newRawStream,
-            null,
-            noiseLevelRef.current,
-          );
-          denoiseCleanupRef.current = cleanup;
-          finalAudioTrack = cleanStream.getAudioTracks()[0] || newRawStream.getAudioTracks()[0];
-          noiseSuppressionActiveRef.current = isActive;
-          setIsNoiseSuppressionActive(isActive);
-          if (!isActive) {
+          const result = await applyRnnoiseDenoise(newRawStream, null, noiseLevelRef.current);
+          // تغيير أحدث بدأ أثناء تجهيز هذا المايك — نتخلّص من النتيجة بدل استخدامها
+          if (denoiseGenerationRef.current !== generation) {
+            result.cleanup();
+            newRawStream.getTracks().forEach((track) => track.stop());
+            return;
+          }
+          nextCleanup = result.cleanup;
+          finalAudioTrack = result.cleanStream.getAudioTracks()[0] || newRawStream.getAudioTracks()[0];
+          nextActive = result.isActive;
+          if (!nextActive) {
             await applyNativeNoiseFallback(newRawStream);
             toast.warning('AI noise suppression could not start on the selected microphone.');
           }
         } else {
           finalAudioTrack = newRawStream.getAudioTracks()[0];
-          noiseSuppressionActiveRef.current = false;
-          setIsNoiseSuppressionActive(false);
         }
 
-        // إيقاف المسار القديم
-        localStreamRef.current.getAudioTracks().forEach((t) => t.stop());
-        localStreamRef.current.removeTrack(localStreamRef.current.getAudioTracks()[0]);
-        localStreamRef.current.addTrack(finalAudioTrack);
+        if (!finalAudioTrack) {
+          newRawStream.getTracks().forEach((track) => track.stop());
+          throw new Error('The selected microphone did not provide an audio track.');
+        }
 
         // احترام حالة الميوت الحالية
-        finalAudioTrack.enabled = !isMuted;
-        publishCallState({ noiseSuppressionActive: noiseSuppressionActiveRef.current });
+        finalAudioTrack.enabled = !localCallStateRef.current.muted;
 
-        // استبدال في الـ WebRTC Sender
+        // 1) استبدال في الـ WebRTC Sender أولاً حتى يستمر الصوت بدون انقطاع
         await replacePeerTrack('audio', finalAudioTrack);
+
+        // 2) الآن نبدّل داخل localStream ونغلق السلسلة القديمة
+        const previousRawStream = rawMicStreamRef.current;
+        const previousCleanup = denoiseCleanupRef.current;
+        rawMicStreamRef.current = newRawStream;
+        denoiseCleanupRef.current = nextCleanup;
+
+        const oldTrack = localStreamRef.current.getAudioTracks()[0];
+        if (oldTrack && oldTrack !== finalAudioTrack) localStreamRef.current.removeTrack(oldTrack);
+        if (!localStreamRef.current.getAudioTracks().includes(finalAudioTrack)) {
+          localStreamRef.current.addTrack(finalAudioTrack);
+        }
+        previousCleanup?.();
+        if (oldTrack && oldTrack !== finalAudioTrack) oldTrack.stop();
+        previousRawStream?.getTracks().forEach((track) => track.stop());
+
+        noiseSuppressionActiveRef.current = nextActive;
+        setIsNoiseSuppressionActive(nextActive);
+        publishCallState({ noiseSuppressionActive: nextActive });
+
         if (activeCall.roomId) {
           await callApi(token, `/${activeCall.roomId}/noise`, {
             method: 'PATCH',
-            body: { enabled: noiseSuppressionActiveRef.current },
+            body: { enabled: nextActive },
           });
         }
         setSelectedMic(deviceId);
@@ -630,7 +658,9 @@ export const VoiceProvider = ({ children }) => {
     if (ringtoneAudioCtx.current) {
       try {
         ringtoneAudioCtx.current.close();
-      } catch (e) {}
+      } catch {
+        // إغلاق AudioContext قد يفشل لو كان مغلقاً بالفعل — لا حاجة لأي إجراء
+      }
       ringtoneAudioCtx.current = null;
     }
   };
@@ -651,6 +681,8 @@ export const VoiceProvider = ({ children }) => {
     }
 
     return () => stopDiscordRingtone();
+    // دوال الرنين تعتمد على refs فقط، وإضافتها للاعتماديات تعيد تشغيل النغمة بلا داعٍ
+    // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [incomingCall, activeCall, callStatus]);
 
   // ─────────────────────────────────────────────────────
@@ -933,23 +965,13 @@ export const VoiceProvider = ({ children }) => {
           { urls: 'stun:stun.l.google.com:19302' },
           { urls: 'stun:stun1.l.google.com:19302' },
           { urls: 'stun:stun.relay.metered.ca:80' },
-          ...(TURN_USERNAME && TURN_CREDENTIAL ? [
-            {
-              urls: 'turn:global.relay.metered.ca:80',
-              username: TURN_USERNAME,
-              credential: TURN_CREDENTIAL,
-            },
-            {
-              urls: 'turn:global.relay.metered.ca:443',
-              username: TURN_USERNAME,
-              credential: TURN_CREDENTIAL,
-            },
-            {
-              urls: 'turn:global.relay.metered.ca:443?transport=tcp',
-              username: TURN_USERNAME,
-              credential: TURN_CREDENTIAL,
-            },
-          ] : []),
+          ...(TURN_USERNAME && TURN_CREDENTIAL
+            ? (TURN_URLS.length ? TURN_URLS : DEFAULT_TURN_URLS).map((urls) => ({
+                urls,
+                username: TURN_USERNAME,
+                credential: TURN_CREDENTIAL,
+              }))
+            : []),
         ]
       }
     });
@@ -967,7 +989,11 @@ export const VoiceProvider = ({ children }) => {
 
     p.on('disconnected', () => {
       console.warn('[Peer] disconnected — reconnecting...');
-      try { p.reconnect(); } catch {}
+      try {
+        p.reconnect();
+      } catch (error) {
+        console.error('[Peer] reconnect failed:', error);
+      }
     });
 
     // مكالمة واردة من PeerJS — نحفظها فقط، الرد يحصل في answerCall
@@ -990,6 +1016,9 @@ export const VoiceProvider = ({ children }) => {
       }
       setPeerReady(false);
     };
+    // هذا الـ effect مخصص لإنشاء الـ Peer مرة واحدة لكل مستخدم؛ الدوال المستخدمة
+    // داخله تُعرَّف في نفس المكوّن ولا يمكن إضافتها دون إعادة إنشاء الاتصال كل render.
+    // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [user?.id]);
 
   const refreshCallParticipants = async (roomId, roomData = null) => {
@@ -1411,10 +1440,8 @@ export const VoiceProvider = ({ children }) => {
     remoteAudioElementsRef.current.clear();
     remoteAudioRef.current = null;
 
-    try {
-      if (localVideoRef.current) localVideoRef.current.srcObject = null;
-      if (remoteVideoRef.current) remoteVideoRef.current.srcObject = null;
-    } catch (e) {}
+    if (localVideoRef.current) localVideoRef.current.srcObject = null;
+    if (remoteVideoRef.current) remoteVideoRef.current.srcObject = null;
 
     remoteStreamRef.current = null;
     remoteStreamsRef.current = [];
@@ -1692,51 +1719,69 @@ export const VoiceProvider = ({ children }) => {
 
   const applyLiveNoiseSuppression = async (enabled, level) => {
     const roomId = activeCallRef.current?.roomId;
-    if (!roomId || !rawMicStreamRef.current || !localStreamRef.current) return;
+    const rawStream = rawMicStreamRef.current;
+    const localStream = localStreamRef.current;
+    if (!roomId || !rawStream || !localStream) return;
+
+    // رقم الجيل يمنع تتالي التبديلات السريعة من إبقاء مسار قديم/مغلق مربوطاً بالمكالمة
+    const generation = denoiseGenerationRef.current + 1;
+    denoiseGenerationRef.current = generation;
 
     try {
-      denoiseGenerationRef.current += 1;
-      denoiseCleanupRef.current?.();
-      denoiseCleanupRef.current = null;
-
+      // 1) نجهّز السلسلة الجديدة بالكامل قبل أي لمس للسلسلة الشغالة
       let finalAudioTrack;
+      let nextCleanup = null;
+      let nextActive = false;
+
       if (enabled) {
-        const { cleanStream, cleanup, isActive } = await applyRnnoiseDenoise(
-          rawMicStreamRef.current,
-          null,
-          level,
-        );
-        denoiseCleanupRef.current = cleanup;
-        finalAudioTrack = cleanStream.getAudioTracks()[0] || rawMicStreamRef.current.getAudioTracks()[0];
-        noiseSuppressionActiveRef.current = isActive;
-        setIsNoiseSuppressionActive(isActive);
-        if (!isActive) {
-          await applyNativeNoiseFallback(rawMicStreamRef.current);
+        const result = await applyRnnoiseDenoise(rawStream, null, level);
+        if (denoiseGenerationRef.current !== generation) {
+          // تغيير أحدث بدأ أثناء التجهيز — نغلق هذه السلسلة ونتجاهلها
+          result.cleanup();
+          return;
+        }
+        nextCleanup = result.cleanup;
+        finalAudioTrack = result.cleanStream.getAudioTracks()[0] || rawStream.getAudioTracks()[0];
+        nextActive = result.isActive;
+        if (!nextActive) {
+          await applyNativeNoiseFallback(rawStream);
           toast.warning('AI noise suppression could not start; microphone noise reduction remains enabled.');
         }
       } else {
-        finalAudioTrack = rawMicStreamRef.current.getAudioTracks()[0];
-        noiseSuppressionActiveRef.current = false;
-        setIsNoiseSuppressionActive(false);
+        finalAudioTrack = rawStream.getAudioTracks()[0];
       }
-      publishCallState({ noiseSuppressionActive: noiseSuppressionActiveRef.current });
 
       if (!finalAudioTrack) return;
-      finalAudioTrack.enabled = !isMuted;
-      const oldTrack = localStreamRef.current.getAudioTracks()[0];
-      if (oldTrack && oldTrack !== finalAudioTrack) localStreamRef.current.removeTrack(oldTrack);
-      if (!localStreamRef.current.getAudioTracks().includes(finalAudioTrack)) {
-        localStreamRef.current.addTrack(finalAudioTrack);
-      }
+
+      finalAudioTrack.enabled = !localCallStateRef.current.muted;
+
+      // 2) نبدّل المسار عند الأقران أولاً (replaceTrack) قبل إنهاء القديم
       await replacePeerTrack('audio', finalAudioTrack);
+
+      // 3) بعد نجاح التبديل نستبدل داخل localStream ونغلق السلسلة القديمة
+      const previousCleanup = denoiseCleanupRef.current;
+      denoiseCleanupRef.current = nextCleanup;
+
+      const oldTrack = localStream.getAudioTracks()[0];
+      if (oldTrack && oldTrack !== finalAudioTrack) localStream.removeTrack(oldTrack);
+      if (!localStream.getAudioTracks().includes(finalAudioTrack)) {
+        localStream.addTrack(finalAudioTrack);
+      }
+      previousCleanup?.();
+      if (oldTrack && oldTrack !== finalAudioTrack) oldTrack.stop();
+
+      noiseSuppressionActiveRef.current = nextActive;
+      setIsNoiseSuppressionActive(nextActive);
+      publishCallState({ noiseSuppressionActive: nextActive });
+
       await callApi(token, `/${roomId}/noise`, {
         method: 'PATCH',
-        body: { enabled: noiseSuppressionActiveRef.current },
+        body: { enabled: nextActive },
       });
 
       const updatedParticipants = callParticipantsRef.current.map((participant) => (
         participant.user_id === user.id
-          ? { ...participant, noise_suppression_enabled: noiseSuppressionActiveRef.current }
+          ? { ...participant, noise_suppression_enabled: nextActive }
           : participant
       ));
       callParticipantsRef.current = updatedParticipants;

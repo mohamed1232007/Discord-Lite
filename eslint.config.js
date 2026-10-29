@@ -18,4 +18,14 @@ export default defineConfig([
       parserOptions: { ecmaFeatures: { jsx: true } },
     },
   },
+  {
+    // ملفات الـ context تصدّر الـ Provider (مكوّن) مع الـ hook الخاص به في نفس الملف،
+    // وهو نمط مقصود هنا؛ نسمح بأسماء الـ hooks فقط بدل تعطيل القاعدة بالكامل.
+    files: ['src/context/**/*.jsx'],
+    rules: {
+      'react-refresh/only-export-components': ['error', {
+        allowExportNames: ['useAuth', 'useToast', 'useVoice'],
+      }],
+    },
+  },
 ])

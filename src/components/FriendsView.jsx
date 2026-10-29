@@ -1,4 +1,4 @@
-import React, { useState, useEffect } from 'react';
+import { useState, useEffect, useCallback } from 'react';
 import { 
   Users, 
   Search, 
@@ -15,7 +15,7 @@ import { useAuth } from '../context/AuthContext';
 const BACKEND_URL = import.meta.env.VITE_BACKEND_URL || 'http://localhost:5000/api';
 
 export default function FriendsView({ onStartChat }) {
-  const { user, token, onlineUsers } = useAuth();
+  const { token, onlineUsers } = useAuth();
   const [tab, setTab] = useState('online');
   const [friends, setFriends] = useState([]);
   const [pendingRequests, setPendingRequests] = useState([]);
@@ -26,8 +26,9 @@ export default function FriendsView({ onStartChat }) {
   const [searching, setSearching] = useState(false);
   const [searchFeedback, setSearchFeedback] = useState('');
   const [requestStatus, setRequestStatus] = useState({});
+  const [respondError, setRespondError] = useState('');
 
-  const fetchFriends = async () => {
+  const fetchFriends = useCallback(async () => {
     if (!token) return;
     try {
       const res = await fetch(`${BACKEND_URL}/friends`, {
@@ -40,9 +41,9 @@ export default function FriendsView({ onStartChat }) {
     } catch (err) {
       console.error('Error fetching friends:', err);
     }
-  };
+  }, [token]);
 
-  const fetchPending = async () => {
+  const fetchPending = useCallback(async () => {
     if (!token) return;
     try {
       const res = await fetch(`${BACKEND_URL}/friends/pending`, {
@@ -55,16 +56,26 @@ export default function FriendsView({ onStartChat }) {
     } catch (err) {
       console.error('Error fetching pending:', err);
     }
-  };
-
-  useEffect(() => {
-    if (token) {
-      fetchFriends();
-      fetchPending();
-    }
   }, [token]);
 
-  const handleSearchUsers = async (e) => {
+  // تحديث أولي + تحديث دوري حتى تظهر طلبات الصداقة الجديدة بدون إعادة تحميل
+  useEffect(() => {
+    if (!token) return undefined;
+
+    const refresh = () => {
+      fetchFriends();
+      fetchPending();
+    };
+    const initialLoad = window.setTimeout(refresh, 0);
+    const interval = window.setInterval(refresh, 15000);
+
+    return () => {
+      window.clearTimeout(initialLoad);
+      window.clearInterval(interval);
+    };
+  }, [token, fetchFriends, fetchPending]);
+
+  const handleSearchUsers = useCallback(async (e) => {
     if (e) e.preventDefault();
     if (!addSearchInput.trim() || !token) return;
 
@@ -84,12 +95,12 @@ export default function FriendsView({ onStartChat }) {
         const errData = await res.json();
         setSearchFeedback(errData.error || 'Failed to search.');
       }
-    } catch (err) {
+    } catch {
       setSearchFeedback('Error connecting to search server.');
     } finally {
       setSearching(false);
     }
-  };
+  }, [addSearchInput, token]);
 
   useEffect(() => {
     const timer = setTimeout(() => {
@@ -102,7 +113,7 @@ export default function FriendsView({ onStartChat }) {
     }, 350);
 
     return () => clearTimeout(timer);
-  }, [addSearchInput]);
+  }, [addSearchInput, handleSearchUsers]);
 
   const handleSendRequest = async (targetUserId) => {
     try {
@@ -120,12 +131,13 @@ export default function FriendsView({ onStartChat }) {
       } else {
         setRequestStatus(prev => ({ ...prev, [targetUserId]: data.error || 'Failed' }));
       }
-    } catch (err) {
+    } catch {
       setRequestStatus(prev => ({ ...prev, [targetUserId]: 'Error' }));
     }
   };
 
   const handleRespond = async (requestId, action) => {
+    setRespondError('');
     try {
       const res = await fetch(`${BACKEND_URL}/friends/respond`, {
         method: 'POST',
@@ -138,9 +150,13 @@ export default function FriendsView({ onStartChat }) {
       if (res.ok) {
         fetchPending();
         fetchFriends();
+        return;
       }
+      const data = await res.json().catch(() => ({}));
+      setRespondError(data.error || 'Could not update the friend request.');
     } catch (err) {
       console.error('Respond error:', err);
+      setRespondError('Could not reach the server. Please try again.');
     }
   };
 
@@ -291,6 +307,11 @@ export default function FriendsView({ onStartChat }) {
             <div className="text-xs font-bold text-[#80848e] uppercase tracking-wider mb-4">
               Pending Requests — {pendingRequests.length}
             </div>
+            {respondError && (
+              <div className="mb-3 rounded border border-[#f23f43]/30 bg-[#f23f43]/10 p-3 text-xs text-[#f23f43]">
+                {respondError}
+              </div>
+            )}
             {pendingRequests.length === 0 ? (
               <div className="text-center text-[#80848e] text-sm py-12">No pending friend requests.</div>
             ) : (

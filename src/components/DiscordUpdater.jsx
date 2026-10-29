@@ -1,5 +1,13 @@
 import { useState, useEffect } from 'react';
 
+const DISCORD_FACTS = [
+  'Spinning the hamster wheels...',
+  'Checking for updates...',
+  'Warming up voice channels...',
+  'Connecting to Discord Lite...',
+  'Did you know? Discord Lite is super fast & native!'
+];
+
 export default function DiscordUpdater({ onFinished }) {
   const [status, setStatus] = useState('checking'); // 'checking' | 'found' | 'downloading' | 'installing' | 'upToDate' | 'ready'
   const [progress, setProgress] = useState(0);
@@ -8,18 +16,10 @@ export default function DiscordUpdater({ onFinished }) {
   const [factIndex, setFactIndex] = useState(0);
   const [fadeOut, setFadeOut] = useState(false);
 
-  const discordFacts = [
-    'Spinning the hamster wheels...',
-    'Checking for updates...',
-    'Warming up voice channels...',
-    'Connecting to Discord Lite...',
-    'Did you know? Discord Lite is super fast & native!'
-  ];
-
   // تدوير عبارات ديسكورد الطريفة أثناء الفحص
   useEffect(() => {
     const timer = setInterval(() => {
-      setFactIndex((prev) => (prev + 1) % discordFacts.length);
+      setFactIndex((prev) => (prev + 1) % DISCORD_FACTS.length);
     }, 2200);
     return () => clearInterval(timer);
   }, []);
@@ -234,7 +234,7 @@ export default function DiscordUpdater({ onFinished }) {
 
       {/* Discord Loading Joke / Fact */}
       <p className="text-xs text-[#949ba4] italic text-center max-w-xs transition-opacity duration-300">
-        "{discordFacts[factIndex]}"
+        "{DISCORD_FACTS[factIndex]}"
       </p>
     </div>
   );

@@ -1,4 +1,4 @@
-import React, { useCallback, useState } from 'react';
+import { lazy, Suspense, useCallback, useState } from 'react';
 import { AuthProvider, useAuth } from './context/AuthContext';
 import { VoiceProvider, useVoice } from './context/VoiceContext';
 import { ToastProvider } from './context/ToastContext';
@@ -6,11 +6,21 @@ import ServerSidebar from './components/ServerSidebar';
 import DMSidebar from './components/DMSidebar';
 import FriendsView from './components/FriendsView';
 import ChatView from './components/ChatView';
-import CallScreen from './components/CallScreen';
 import CallOverlay from './components/CallOverlay';
-import LandingPage from './components/LandingPage';
-import LoginPage from './components/LoginPage';
-import DiscordUpdater from './components/DiscordUpdater';
+
+// الشاشات الثقيلة تُحمّل عند الحاجة فقط لتقليل حجم الحزمة الأساسية
+const CallScreen = lazy(() => import('./components/CallScreen'));
+const LandingPage = lazy(() => import('./components/LandingPage'));
+const LoginPage = lazy(() => import('./components/LoginPage'));
+const DiscordUpdater = lazy(() => import('./components/DiscordUpdater'));
+
+function ScreenFallback() {
+  return (
+    <div className="flex h-full w-full flex-1 items-center justify-center bg-[#000000] text-[#80848e]">
+      <span className="animate-pulse text-sm">Loading…</span>
+    </div>
+  );
+}
 
 function MainApp() {
   const { user, loading } = useAuth();
@@ -20,55 +30,40 @@ function MainApp() {
   const [updaterFinished, setUpdaterFinished] = useState(!isTauriApp);
   const finishUpdater = useCallback(() => setUpdaterFinished(true), []);
 
-  // تذكّر الصفحة المفضلة، وإذا كان المستخدم مسجل دخوله في جلسة سابقة يدخل مباشرة للـ app
-  const [currentView, setCurrentView] = useState(() => {
-    const savedView = localStorage.getItem('dis_lite_view');
+  // الصفحة المطلوبة من المستخدم (landing / login / app) مع حفظها للزيارة القادمة
+  const [requestedView, setRequestedView] = useState(() => {
     const token = localStorage.getItem('dis_lite_token');
     if (token) return 'app';
     if (isTauriApp) return 'login'; // في تطبيق الويندوز: يفتح شاشة تسجيل الدخول مباشرة بدون صفحة الموقع
-    return savedView || 'landing';
+    return localStorage.getItem('dis_lite_view') || 'landing';
   });
+
+  const changeView = useCallback((view) => {
+    setRequestedView(view);
+    localStorage.setItem('dis_lite_view', view);
+  }, []);
+
+  // الصفحة الفعلية مشتقة من حالة الدخول بدل تعديل الـ state داخل useEffect
+  // (يمنع الـ re-render المزدوج ويمنع الدوران في حلقة تحديث)
+  const currentView = user
+    ? 'app'
+    : (isTauriApp ? 'login' : (requestedView === 'landing' ? 'landing' : 'login'));
 
   const [activeTab, setActiveTab] = useState('dm');
   const [selectedChat, setSelectedChat] = useState(null);
   const [isChatVisible, setIsChatVisible] = useState(false);
 
-  const openChat = (chat) => {
+  const openChat = useCallback((chat) => {
     setSelectedChat(chat);
     setIsChatVisible(!!chat);
-  };
-
-  // حفظ الـ view عند تغييره لضمان عدم فقدانه عند عمل Refresh
-  const changeView = (view) => {
-    setCurrentView(view);
-    localStorage.setItem('dis_lite_view', view);
-  };
-
-  // لو المستخدم سجل دخوله، نقدر نوجهه للتطبيق فوراً لو هو كان في صفحة اللوجين
-  React.useEffect(() => {
-    if (user && (currentView === 'login' || currentView === 'landing')) {
-      // إذا كان المستخدم مسجلاً ولديه توكن، وجهه مباشرة للتطبيق عند الريفرش أو بعد تسجيل الدخول
-      const savedView = localStorage.getItem('dis_lite_view');
-      if (savedView === 'landing' && !localStorage.getItem('dis_lite_token')) {
-        // إذا اختار عمداً البقاء في الـ landing
-      } else {
-        changeView('app');
-      }
-    } else if (!user && !loading && currentView === 'app') {
-      // عند تسجيل الخروج أو عدم وجود جلسة صالحة، يرجع فوراً لصفحة تسجيل الدخول
-      changeView('login');
-    }
-  }, [user, loading, currentView]);
-
-  // لو في مكالمة جارية وهو في الـ landing أو login، ننقله للـ app فوراً عشان يشوف المكالمة
-  React.useEffect(() => {
-    if (activeCall && currentView !== 'app') {
-      changeView('app');
-    }
-  }, [activeCall]);
+  }, []);
 
   if (!updaterFinished) {
-    return <DiscordUpdater onFinished={finishUpdater} />;
+    return (
+      <Suspense fallback={<ScreenFallback />}>
+        <DiscordUpdater onFinished={finishUpdater} />
+      </Suspense>
+    );
   }
 
   if (loading) {
@@ -95,9 +90,9 @@ function MainApp() {
   }
 
   return (
-    <>
-      {currentView === 'landing' && !isTauriApp ? (
-        <LandingPage 
+    <Suspense fallback={<ScreenFallback />}>
+      {currentView === 'landing' ? (
+        <LandingPage
           onOpenApp={() => changeView('app')}
           onOpenLogin={() => {
             if (user) {
@@ -107,8 +102,8 @@ function MainApp() {
             }
           }}
         />
-      ) : currentView === 'login' || (isTauriApp && currentView === 'landing') ? (
-        <LoginPage 
+      ) : currentView === 'login' ? (
+        <LoginPage
           onBackToLanding={() => changeView(isTauriApp ? 'login' : 'landing')}
           onSuccess={() => changeView('app')}
         />
@@ -119,14 +114,14 @@ function MainApp() {
 
           <div className="flex-1 flex overflow-hidden">
             {/* 1. Leftmost Server Sidebar الثابت (بدون زر هوم كما طلبت) */}
-            <ServerSidebar 
-              activeTab={activeTab} 
-              setActiveTab={setActiveTab} 
+            <ServerSidebar
+              activeTab={activeTab}
+              setActiveTab={setActiveTab}
             />
 
             {/* 2. القائمة الجانبية الأصلية للرسائل والأصدقاء */}
-            <DMSidebar 
-              selectedChat={selectedChat} 
+            <DMSidebar
+              selectedChat={selectedChat}
               onSelectChat={openChat}
               onShowCall={() => setIsChatVisible(false)}
               onOpenAuth={() => changeView('login')}
@@ -134,25 +129,28 @@ function MainApp() {
 
             {/* 3. الجانب الأيمن: شاشة الكول الكبيرة أو الشات أو الأصدقاء */}
             {activeCall && !isChatVisible ? (
-              <CallScreen onOpenChat={(participant) => {
-                const chatUser = participant?.id ? participant : activeCall.friend;
-                if (chatUser?.id) openChat(chatUser);
-              }} />
+              <Suspense fallback={<ScreenFallback />}>
+                <CallScreen onOpenChat={(participant) => {
+                  const chatUser = participant?.id ? participant : activeCall.friend;
+                  if (chatUser?.id) openChat(chatUser);
+                }} />
+              </Suspense>
             ) : selectedChat ? (
               <ChatView
+                key={selectedChat.id}
                 user={selectedChat}
                 onBack={() => openChat(null)}
                 onCallStarted={() => setIsChatVisible(false)}
               />
             ) : (
-              <FriendsView 
+              <FriendsView
                 onStartChat={openChat}
               />
             )}
           </div>
         </div>
       )}
-    </>
+    </Suspense>
   );
 }
 

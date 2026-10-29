@@ -1,8 +1,7 @@
-import React, { useState, useRef, useEffect } from 'react';
+import { useState, useRef, useEffect } from 'react';
 import {
   X,
   Mic,
-  MicOff,
   Headphones,
   Activity,
   User,
@@ -14,9 +13,7 @@ import {
   Monitor,
   Wifi,
   Info,
-  ChevronDown,
-  Bluetooth,
-  Volume2
+  ChevronDown
 } from 'lucide-react';
 import { useVoice } from '../context/VoiceContext';
 import { useAuth } from '../context/AuthContext';

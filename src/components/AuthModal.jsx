@@ -1,4 +1,4 @@
-import React, { useState } from 'react';
+import { useState } from 'react';
 import { useAuth } from '../context/AuthContext';
 import { Loader2 } from 'lucide-react';
 
@@ -22,13 +22,12 @@ export default function AuthModal({ isOpen, onClose }) {
 
     try {
       if (isLogin) {
-        const { error } = await signIn(email, password);
-        if (error) throw error;
+        // signIn/signUp ترمي استثناءً عند الفشل، ولا تُرجع كائن { error }
+        await signIn(email, password);
         onClose();
       } else {
         if (!username.trim()) throw new Error('Username is required');
-        const { error } = await signUp(email, password, username, displayName);
-        if (error) throw error;
+        await signUp(email, password, username, displayName);
         onClose();
       }
     } catch (err) {
@@ -150,7 +149,7 @@ export default function AuthModal({ isOpen, onClose }) {
                 onClick={() => { setIsLogin(true); setErrorMsg(''); }} 
                 className="text-[#00a8fc] hover:underline"
               >
-                Already have an account?
+                Log In
               </button>
             </span>
           )}

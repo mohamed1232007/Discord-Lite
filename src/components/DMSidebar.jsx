@@ -151,20 +151,21 @@ export default function DMSidebar({ selectedChat, onSelectChat, onShowCall, onOp
       : {};
 
     unreadCountsRef.current = counts;
-    unreadCursorRef.current = storedCursor || new Date().toISOString();
+    // المؤشر يأتي من توقيت السيرفر فقط؛ أول طلب يحدده تلقائياً
+    unreadCursorRef.current = storedCursor || null;
   }, [token, user?.id]);
 
   useEffect(() => {
-    if (!token || !user?.id || !unreadCursorRef.current) return undefined;
+    if (!token || !user?.id) return undefined;
 
     const pollUnreadMessages = async () => {
       if (document.hidden || unreadPollInFlightRef.current) return;
       unreadPollInFlightRef.current = true;
       const after = unreadCursorRef.current;
-      const through = new Date().toISOString();
 
       try {
-        const query = new URLSearchParams({ after, through });
+        const query = new URLSearchParams();
+        if (after) query.set('after', after);
         const response = await fetch(`${BACKEND_URL}/messages/inbox/unread?${query}`, {
           headers: { Authorization: `Bearer ${token}` },
         });
@@ -178,11 +179,15 @@ export default function DMSidebar({ selectedChat, onSelectChat, onShowCall, onOp
           }
         });
 
-        unreadCursorRef.current = through;
         unreadCountsRef.current = nextCounts;
         setUnreadState({ userId: user.id, counts: nextCounts });
         window.localStorage.setItem(`${UNREAD_STORAGE_KEY}:${user.id}`, JSON.stringify(nextCounts));
-        window.localStorage.setItem(`${UNREAD_CURSOR_STORAGE_KEY}:${user.id}`, through);
+
+        // استخدام مؤشر السيرفر يمنع فقدان/تكرار العدّاد عند اختلاف ساعة الجهاز
+        if (data.cursor) {
+          unreadCursorRef.current = data.cursor;
+          window.localStorage.setItem(`${UNREAD_CURSOR_STORAGE_KEY}:${user.id}`, data.cursor);
+        }
       } catch (error) {
         console.error('[Messages] Could not update unread counts:', error);
       } finally {

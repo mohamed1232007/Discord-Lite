@@ -1,4 +1,4 @@
-import React, { createContext, useContext, useEffect, useState } from 'react';
+import { createContext, useContext, useEffect, useState } from 'react';
 import { supabase } from '../services/supabaseClient';
 
 const AuthContext = createContext({});
@@ -86,8 +86,9 @@ export const AuthProvider = ({ children }) => {
 
     return () => {
       presenceChannel.unsubscribe();
+      supabase.removeChannel(presenceChannel);
     };
-  }, [user?.id]);
+  }, [user?.id, user?.username]);
 
   const signUp = async (email, password, username, displayName) => {
     const res = await fetch(`${BACKEND_URL}/auth/register`, {
@@ -137,12 +138,16 @@ export const AuthProvider = ({ children }) => {
           body: JSON.stringify({ status: 'offline' })
         });
       }
-    } catch (e) {}
+    } catch (error) {
+      // تسجيل الخروج محلياً يجب أن ينجح حتى لو فشل إبلاغ السيرفر
+      console.warn('Could not mark the user as offline:', error);
+    }
 
     localStorage.removeItem('dis_lite_token');
     localStorage.removeItem('dis_lite_view');
     setToken(null);
     setUser(null);
+    setOnlineUsers(new Set());
   };
 
   return (

@@ -1,6 +1,6 @@
 [package]
 name = "discord-lite"
-version = "2.4.4"
+version = "2.5.3"
 description = "A lightweight desktop chat and voice application."
 authors = ["Discord Lite contributors"]
 license = ""

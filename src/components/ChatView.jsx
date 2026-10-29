@@ -1,4 +1,4 @@
-import { useState, useEffect, useRef, useCallback } from 'react';
+import { useState, useEffect, useLayoutEffect, useRef, useCallback } from 'react';
 import { 
   Phone, 
   Video, 
@@ -13,12 +13,21 @@ import {
 } from 'lucide-react';
 import { useAuth } from '../context/AuthContext';
 import { useVoice } from '../context/VoiceContext';
+import { useToast } from '../context/ToastContext';
 
 const BACKEND_URL = import.meta.env.VITE_BACKEND_URL || 'http://localhost:5000/api';
+const PAGE_SIZE = 100;
+
+const sortByCreatedAt = (a, b) => {
+  const diff = new Date(a.created_at).getTime() - new Date(b.created_at).getTime();
+  if (diff !== 0) return diff;
+  return String(a.id).localeCompare(String(b.id));
+};
 
 export default function ChatView({ user, onBack, onCallStarted }) {
   const { user: currentUser, token, onlineUsers } = useAuth();
   const { startCall } = useVoice();
+  const toast = useToast();
 
   const isOnline = onlineUsers?.has(user.id);
   const displayName = user.display_name || user.username || user.name || 'Friend';
@@ -27,46 +36,111 @@ export default function ChatView({ user, onBack, onCallStarted }) {
   const [messages, setMessages] = useState([]);
   const [inputText, setInputText] = useState('');
   const [loading, setLoading] = useState(true);
+  const [hasMore, setHasMore] = useState(false);
+  const [loadingMore, setLoadingMore] = useState(false);
+  const [sending, setSending] = useState(false);
   const messagesEndRef = useRef(null);
+  const scrollContainerRef = useRef(null);
+  const stickToBottomRef = useRef(true);
+  const initialLoadDoneRef = useRef(false);
+  const pendingScrollRestoreRef = useRef(null);
 
-  const scrollToBottom = () => {
-    messagesEndRef.current?.scrollIntoView({ behavior: 'smooth' });
+  const handleScroll = () => {
+    const element = scrollContainerRef.current;
+    if (!element) return;
+    stickToBottomRef.current = element.scrollHeight - element.scrollTop - element.clientHeight < 120;
   };
 
+  useLayoutEffect(() => {
+    if (pendingScrollRestoreRef.current !== null) {
+      const element = scrollContainerRef.current;
+      if (element) element.scrollTop = element.scrollHeight - pendingScrollRestoreRef.current;
+      pendingScrollRestoreRef.current = null;
+      return;
+    }
+    if (stickToBottomRef.current) {
+      messagesEndRef.current?.scrollIntoView({ behavior: 'smooth' });
+    }
+  }, [messages]);
+
+  // جلب أحدث صفحة من الرسائل + دمجها مع ما تم تحميله مسبقاً
+  const currentUserId = user?.id;
   const fetchMessages = useCallback(async () => {
-    if (!token || !user?.id) return;
+    if (!token || !currentUserId) return;
     try {
-      const res = await fetch(`${BACKEND_URL}/messages/direct/${user.id}`, {
+      const res = await fetch(`${BACKEND_URL}/messages/direct/${currentUserId}?limit=${PAGE_SIZE}`, {
         headers: { 'Authorization': `Bearer ${token}` }
       });
-      if (res.ok) {
-        const data = await res.json();
-        const nextMessages = data.messages || [];
-        setMessages((previousMessages) => {
-          const unchanged = previousMessages.length === nextMessages.length
-            && previousMessages.every((message, index) => message.id === nextMessages[index]?.id);
-          return unchanged ? previousMessages : nextMessages;
-        });
+      if (!res.ok) {
+        if (res.status !== 401) {
+          console.error(`Fetch messages failed with status ${res.status}.`);
+        }
+        return;
+      }
+      const data = await res.json();
+      const latest = data.messages || [];
+
+      setMessages((previousMessages) => {
+        if (previousMessages.length === 0) return latest;
+        const knownIds = new Set(previousMessages.map((message) => message.id));
+        const additions = latest.filter((message) => !knownIds.has(message.id));
+        if (additions.length === 0) return previousMessages;
+        return [...previousMessages, ...additions].sort(sortByCreatedAt);
+      });
+
+      if (!initialLoadDoneRef.current) {
+        initialLoadDoneRef.current = true;
+        setHasMore(Boolean(data.hasMore));
       }
     } catch (err) {
       console.error('Error fetching messages:', err);
     } finally {
       setLoading(false);
     }
-  }, [token, user.id]);
+  }, [token, currentUserId]);
+
+  // تحميل الرسائل الأقدم (pagination) مع الحفاظ على موضع التمرير
+  const loadOlderMessages = async () => {
+    if (!hasMore || loadingMore || !token || messages.length === 0) return;
+
+    const element = scrollContainerRef.current;
+    pendingScrollRestoreRef.current = element ? element.scrollHeight : null;
+    stickToBottomRef.current = false;
+    setLoadingMore(true);
+
+    try {
+      const before = encodeURIComponent(messages[0].created_at);
+      const res = await fetch(`${BACKEND_URL}/messages/direct/${user.id}?limit=${PAGE_SIZE}&before=${before}`, {
+        headers: { 'Authorization': `Bearer ${token}` }
+      });
+      if (!res.ok) throw new Error(`Request failed with status ${res.status}.`);
+
+      const data = await res.json();
+      const older = data.messages || [];
+      setMessages((previousMessages) => {
+        const knownIds = new Set(previousMessages.map((message) => message.id));
+        const additions = older.filter((message) => !knownIds.has(message.id));
+        if (additions.length === 0) return previousMessages;
+        return [...additions, ...previousMessages].sort(sortByCreatedAt);
+      });
+      setHasMore(Boolean(data.hasMore));
+    } catch (err) {
+      console.error('Error loading older messages:', err);
+      pendingScrollRestoreRef.current = null;
+      toast.error('Could not load older messages.');
+    } finally {
+      setLoadingMore(false);
+    }
+  };
 
   useEffect(() => {
     const timer = window.setTimeout(fetchMessages, 0);
     return () => window.clearTimeout(timer);
   }, [fetchMessages]);
 
+  // تحديث الرسائل عبر الـ API الموثّق (Realtime غير متاح حالياً بسبب سياسات RLS)
   useEffect(() => {
-    scrollToBottom();
-  }, [messages]);
-
-  // Refresh direct messages through the authenticated API.
-  useEffect(() => {
-    if (!currentUser?.id || !user?.id) return;
+    if (!currentUser?.id || !user?.id) return undefined;
 
     const poll = window.setInterval(() => {
       if (!document.hidden) fetchMessages();
@@ -83,10 +157,12 @@ export default function ChatView({ user, onBack, onCallStarted }) {
 
   const handleSend = async (e) => {
     e.preventDefault();
-    if (!inputText.trim() || !token) return;
-
     const messageText = inputText.trim();
+    if (!messageText || !token || sending) return;
+
+    setSending(true);
     setInputText('');
+    stickToBottomRef.current = true;
 
     try {
       const res = await fetch(`${BACKEND_URL}/messages/direct`, {
@@ -101,15 +177,22 @@ export default function ChatView({ user, onBack, onCallStarted }) {
         })
       });
 
-      if (res.ok) {
-        const data = await res.json();
-        setMessages((prev) => {
-          if (prev.some(m => m.id === data.message.id)) return prev;
-          return [...prev, data.message];
-        });
+      if (!res.ok) {
+        const errorData = await res.json().catch(() => ({}));
+        throw new Error(errorData.error || `Message could not be sent (${res.status}).`);
       }
+
+      const data = await res.json();
+      setMessages((prev) => (
+        prev.some((message) => message.id === data.message.id) ? prev : [...prev, data.message]
+      ));
     } catch (err) {
       console.error('Send message error:', err);
+      // إعادة النص حتى لا تضيع الرسالة على المستخدم
+      setInputText((current) => (current ? current : messageText));
+      toast.error(err.message || 'Message could not be sent.');
+    } finally {
+      setSending(false);
     }
   };
 
@@ -181,7 +264,11 @@ export default function ChatView({ user, onBack, onCallStarted }) {
       </div>
 
       {/* Messages Area */}
-      <div className="flex-1 overflow-y-auto p-4 space-y-4 discord-scrollbar">
+      <div
+        ref={scrollContainerRef}
+        onScroll={handleScroll}
+        className="flex-1 overflow-y-auto p-4 space-y-4 discord-scrollbar"
+      >
         {/* Welcome Banner */}
         <div className="pt-6 pb-2">
           <div className="w-20 h-20 rounded-full flex items-center justify-center font-bold text-2xl text-white mb-3 bg-[#1e1f22] border-2 border-[#2b2d31]">
@@ -199,6 +286,20 @@ export default function ChatView({ user, onBack, onCallStarted }) {
         </div>
 
         <div className="w-full h-[1px] bg-[#18191c] my-2" />
+
+        {hasMore && !loading && (
+          <div className="flex justify-center pb-2">
+            <button
+              type="button"
+              onClick={loadOlderMessages}
+              disabled={loadingMore}
+              className="flex items-center gap-2 rounded-md bg-[#111214] px-3 py-1.5 text-xs font-semibold text-[#dbdee1] transition hover:bg-[#1e1f22] disabled:opacity-50"
+            >
+              {loadingMore && <Loader2 size={13} className="animate-spin" />}
+              {loadingMore ? 'Loading older messages…' : 'Load older messages'}
+            </button>
+          </div>
+        )}
 
         {/* Message bubbles */}
         {loading ? (
@@ -258,10 +359,10 @@ export default function ChatView({ user, onBack, onCallStarted }) {
             </button>
             <button 
               type="submit" 
-              className={`transition ${inputText.trim() ? 'text-[#5865f2] hover:text-[#4752c4]' : 'opacity-40 cursor-not-allowed'}`}
-              disabled={!inputText.trim()}
+              className={`transition ${inputText.trim() && !sending ? 'text-[#5865f2] hover:text-[#4752c4]' : 'opacity-40 cursor-not-allowed'}`}
+              disabled={!inputText.trim() || sending}
             >
-              <SendHorizontal size={22} />
+              {sending ? <Loader2 size={22} className="animate-spin" /> : <SendHorizontal size={22} />}
             </button>
           </div>
         </form>

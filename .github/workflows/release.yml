@@ -58,6 +58,10 @@ jobs:
           VITE_SUPABASE_URL: ${{ secrets.VITE_SUPABASE_URL }}
           VITE_SUPABASE_PUBLISHABLE_KEY: ${{ secrets.VITE_SUPABASE_PUBLISHABLE_KEY }}
           VITE_BACKEND_URL: ${{ secrets.VITE_BACKEND_URL }}
+          # اختيارية: بدونها تعمل المكالمات عبر STUN فقط (قد تفشل خلف Symmetric NAT)
+          VITE_TURN_URL: ${{ secrets.VITE_TURN_URL }}
+          VITE_TURN_USERNAME: ${{ secrets.VITE_TURN_USERNAME }}
+          VITE_TURN_CREDENTIAL: ${{ secrets.VITE_TURN_CREDENTIAL }}
         with:
           projectPath: .
           tagName: v__VERSION__
