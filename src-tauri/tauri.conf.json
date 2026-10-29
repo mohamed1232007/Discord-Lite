@@ -1,7 +1,7 @@
 {
   "$schema": "../node_modules/@tauri-apps/cli/config.schema.json",
   "productName": "Discord Lite",
-  "version": "2.5.1",
+  "version": "2.5.2",
   "identifier": "com.discordlite.app",
   "build": {
     "frontendDist": "../dist",
