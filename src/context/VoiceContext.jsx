@@ -59,7 +59,7 @@ const applyNativeNoiseFallback = async (stream) => {
 };
 
 export const VoiceProvider = ({ children }) => {
-  const { user, token } = useAuth();
+  const { user, token, onlineUsers } = useAuth();
   const toast = useToast();
 
   // ── State ──────────────────────────────────────────────
@@ -123,7 +123,14 @@ export const VoiceProvider = ({ children }) => {
   const callParticipantsRef = useRef(callParticipants);
   const localMembershipActiveRef = useRef(false);
   const endCallCleanupRef = useRef(null);
+  const onlineUsersRef = useRef(onlineUsers);
+  const offlineTimersRef = useRef(new Map());
   const turnWarningShownRef = useRef(false);
+  const OFFLINE_GRACE_MS = 10_000;
+
+  useEffect(() => {
+    onlineUsersRef.current = onlineUsers;
+  }, [onlineUsers]);
 
   const warnIfTurnIsUnavailable = () => {
     if (TURN_USERNAME && TURN_CREDENTIAL) return;
@@ -758,10 +765,7 @@ export const VoiceProvider = ({ children }) => {
   // Helper: Setup peerCall event listeners
   // ─────────────────────────────────────────────────────
   const getPeerUserId = (peerId) => callParticipantsRef.current
-    .find((participant) => (
-      participant.peer_id === peerId
-      || participant.user_id.replace(/-/g, '') === peerId
-    ))?.user_id;
+    .find((participant) => participant.peer_id === peerId)?.user_id;
 
   const answerPeerCall = (call, participantId) => {
     if (!call || !participantId || !localStreamRef.current || peerCallsRef.current.has(participantId)) return;
@@ -784,7 +788,11 @@ export const VoiceProvider = ({ children }) => {
 
   const startPeerCall = (participant) => {
     const participantId = participant.user_id;
-    const remotePeerId = participant.peer_id || participantId.replace(/-/g, '');
+    const remotePeerId = participant.peer_id;
+    if (!remotePeerId) {
+      console.error('[PeerCall] Missing registered peer ID for participant:', participantId);
+      return;
+    }
     if (!peerRef.current || !localStreamRef.current || peerCallsRef.current.has(participantId)) return;
     if (user?.id >= participantId) return;
     if (!localStreamRef.current.getAudioTracks().some((track) => track.readyState === 'live')) {
@@ -891,7 +899,8 @@ export const VoiceProvider = ({ children }) => {
         iceServers: [
           { urls: 'stun:stun.l.google.com:19302' },
           { urls: 'stun:stun1.l.google.com:19302' },
-          { urls: 'stun:stun.relay.metered.ca:80' },          ...(TURN_USERNAME && TURN_CREDENTIAL ? [
+          { urls: 'stun:stun.relay.metered.ca:80' },
+          ...(TURN_USERNAME && TURN_CREDENTIAL ? [
             {
               urls: 'turn:global.relay.metered.ca:80',
               username: TURN_USERNAME,
@@ -1029,6 +1038,74 @@ export const VoiceProvider = ({ children }) => {
     onIncomingRoomEnded: () => endCallCleanupRef.current?.(true),
     onActiveRoomEnded: () => endCallCleanupRef.current?.(false),
   });
+
+  useEffect(() => {
+    const timers = offlineTimersRef.current;
+    const otherActiveParticipants = activeCall
+      ? callParticipants.filter((participant) => (
+        participant.user_id !== user?.id && participant.status === 'active'
+      ))
+      : [];
+    const activeParticipantIds = new Set(
+      otherActiveParticipants.map((participant) => participant.user_id),
+    );
+
+    for (const [participantId, timer] of timers) {
+      if (onlineUsers.has(participantId) || !activeParticipantIds.has(participantId)) {
+        clearTimeout(timer);
+        timers.delete(participantId);
+      }
+    }
+
+    for (const participant of otherActiveParticipants) {
+      if (onlineUsers.has(participant.user_id) || timers.has(participant.user_id)) continue;
+
+      const timer = setTimeout(() => {
+        timers.delete(participant.user_id);
+        const online = onlineUsersRef.current;
+        if (!user?.id || !online.has(user.id)) return;
+
+        const anyoneOnline = callParticipantsRef.current.some((currentParticipant) => (
+          currentParticipant.user_id !== user.id
+          && currentParticipant.status === 'active'
+          && online.has(currentParticipant.user_id)
+        ));
+        if (!anyoneOnline) {
+          toast.info('The other person disconnected.');
+          endCallCleanupRef.current?.(true);
+        }
+      }, OFFLINE_GRACE_MS);
+      timers.set(participant.user_id, timer);
+    }
+  }, [onlineUsers, callParticipants, activeCall, user?.id, toast]);
+
+  useEffect(() => () => {
+    offlineTimersRef.current.forEach((timer) => clearTimeout(timer));
+    offlineTimersRef.current.clear();
+  }, []);
+
+  useEffect(() => {
+    if (!incomingCall || !user?.id) return undefined;
+    if (!onlineUsers.has(user.id) || onlineUsers.has(incomingCall.callerId)) return undefined;
+
+    const timer = setTimeout(() => {
+      const online = onlineUsersRef.current;
+      if (online.has(user.id) && !online.has(incomingCall.callerId)) {
+        endCallCleanupRef.current?.(true);
+      }
+    }, OFFLINE_GRACE_MS);
+    return () => clearTimeout(timer);
+  }, [incomingCall, onlineUsers, user?.id]);
+
+  useEffect(() => {
+    if (!activeCall?.roomId || callStatus !== 'calling') return undefined;
+
+    const timer = setTimeout(() => {
+      toast.info('No answer.');
+      endCallCleanupRef.current?.(true);
+    }, 60_000);
+    return () => clearTimeout(timer);
+  }, [activeCall?.roomId, callStatus, toast]);
 
   // ─────────────────────────────────────────────────────
   // 4. Start a direct call; participants can invite others after joining
