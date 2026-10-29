@@ -679,95 +679,6 @@ export const VoiceProvider = ({ children }) => {
   // ─────────────────────────────────────────────────────
   // Helper: Acquire microphone & initial media stream (with RNNoise Neural Denoise)
   // ─────────────────────────────────────────────────────
-  const initializeCallDenoiser = (rawStream) => {
-    const generation = ++denoiseGenerationRef.current;
-
-    window.setTimeout(() => {
-      void (async () => {
-        try {
-          const { cleanStream, cleanup, isActive } = await applyRnnoiseDenoise(
-            rawStream,
-            null,
-            noiseLevelRef.current,
-          );
-          if (generation !== denoiseGenerationRef.current || rawMicStreamRef.current !== rawStream) {
-            cleanup();
-            return;
-          }
-
-          if (!isActive) {
-            await applyNativeNoiseFallback(rawStream);
-            if (generation !== denoiseGenerationRef.current) return;
-            noiseSuppressionActiveRef.current = false;
-            setIsNoiseSuppressionActive(false);
-            toast.warning('AI noise suppression is unavailable; microphone noise reduction remains enabled.');
-            return;
-          }
-
-          const cleanAudioTrack = cleanStream.getAudioTracks()[0];
-          const localStream = localStreamRef.current;
-          if (!cleanAudioTrack || !localStream) {
-            cleanup();
-            throw new Error('The call audio stream is not ready for noise suppression.');
-          }
-
-          const previousAudioTrack = localStream.getAudioTracks()[0];
-          cleanAudioTrack.enabled = previousAudioTrack?.enabled ?? true;
-          try {
-            await replacePeerTrack('audio', cleanAudioTrack);
-          } catch (error) {
-            if (previousAudioTrack) {
-              await replacePeerTrack('audio', previousAudioTrack).catch((rollbackError) => {
-                console.error('[NoiseSuppression] Could not restore the previous audio track:', rollbackError);
-              });
-            }
-            cleanup();
-            throw error;
-          }
-
-          if (previousAudioTrack && previousAudioTrack !== cleanAudioTrack) {
-            localStream.removeTrack(previousAudioTrack);
-          }
-          if (!localStream.getAudioTracks().includes(cleanAudioTrack)) {
-            localStream.addTrack(cleanAudioTrack);
-          }
-
-          denoiseCleanupRef.current?.();
-          denoiseCleanupRef.current = cleanup;
-          noiseSuppressionActiveRef.current = true;
-          setIsNoiseSuppressionActive(true);
-          publishCallState({ noiseSuppressionActive: true });
-
-          const roomId = activeCallRef.current?.roomId;
-          if (roomId) {
-            try {
-              await callApi(token, `/${roomId}/noise`, {
-                method: 'PATCH',
-                body: { enabled: true },
-              });
-            } catch (error) {
-              console.error('[NoiseSuppression] Could not sync active state:', error);
-            }
-            const updatedParticipants = callParticipantsRef.current.map((participant) => (
-              participant.user_id === user?.id
-                ? { ...participant, noise_suppression_enabled: true }
-                : participant
-            ));
-            callParticipantsRef.current = updatedParticipants;
-            setCallParticipants(updatedParticipants);
-          }
-        } catch (error) {
-          if (generation !== denoiseGenerationRef.current || rawMicStreamRef.current !== rawStream) return;
-          console.error('[NoiseSuppression] Could not initialize call audio:', error);
-          await applyNativeNoiseFallback(rawStream);
-          noiseSuppressionActiveRef.current = false;
-          setIsNoiseSuppressionActive(false);
-          toast.warning('AI noise suppression is unavailable; microphone noise reduction remains enabled.');
-        }
-      })();
-    }, 0);
-  };
-
   const acquireMediaStream = async ({ includeVideo = false } = {}) => {
     try {
       const audioConstraints = {
@@ -799,21 +710,45 @@ export const VoiceProvider = ({ children }) => {
       }
       rawMicStreamRef.current = rawStream;
 
+      let processedStream = rawStream;
       if (isNoiseSuppressionEnabled) {
-        noiseSuppressionActiveRef.current = false;
-        setIsNoiseSuppressionActive(false);
-        initializeCallDenoiser(rawStream);
+        try {
+          const { cleanStream, cleanup, isActive } = await applyRnnoiseDenoise(
+            rawStream,
+            null,
+            noiseLevelRef.current,
+          );
+          denoiseCleanupRef.current = cleanup;
+          processedStream = cleanStream;
+          noiseSuppressionActiveRef.current = isActive;
+          setIsNoiseSuppressionActive(isActive);
+          if (!isActive) {
+            await applyNativeNoiseFallback(rawStream);
+            toast.warning('AI noise suppression is unavailable; microphone noise reduction remains enabled.');
+          }
+        } catch (error) {
+          console.warn('[NoiseSuppression] Could not process microphone before the call:', error);
+          noiseSuppressionActiveRef.current = false;
+          setIsNoiseSuppressionActive(false);
+          await applyNativeNoiseFallback(rawStream);
+          toast.warning('AI noise suppression is unavailable; microphone noise reduction remains enabled.');
+        }
       } else {
         noiseSuppressionActiveRef.current = false;
         setIsNoiseSuppressionActive(false);
       }
 
-      // إضافة مسار فيديو خامل مسبقاً لكي يكون Video Sender جاهزاً للشير سكرين
-      const blankTrack = rawStream.getVideoTracks().length ? null : createBlankVideoTrack();
-      if (blankTrack) {
-        rawStream.addTrack(blankTrack);
+      const cameraTrack = rawStream.getVideoTracks()[0];
+      if (cameraTrack && !processedStream.getVideoTracks().some((track) => track.id === cameraTrack.id)) {
+        processedStream.addTrack(cameraTrack);
       }
-      return rawStream;
+
+      // إضافة مسار فيديو خامل مسبقاً لكي يكون Video Sender جاهزاً للشير سكرين
+      const blankTrack = processedStream.getVideoTracks().length ? null : createBlankVideoTrack();
+      if (blankTrack) {
+        processedStream.addTrack(blankTrack);
+      }
+      return processedStream;
     } catch (e) {
       console.error('[Media] microphone unavailable:', e);
       throw e;
