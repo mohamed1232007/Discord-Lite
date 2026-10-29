@@ -1,11 +1,22 @@
-import { RnnoiseWorkletNode, loadRnnoise } from '@sapphi-red/web-noise-suppressor';
+import {
+  RnnoiseWorkletNode,
+  NoiseGateWorkletNode,
+  loadRnnoise,
+} from '@sapphi-red/web-noise-suppressor';
 import rnnoiseWorkletPath from '@sapphi-red/web-noise-suppressor/rnnoiseWorklet.js?url';
+import noiseGateWorkletPath from '@sapphi-red/web-noise-suppressor/noiseGateWorklet.js?url';
 import rnnoiseWasmPath from '@sapphi-red/web-noise-suppressor/rnnoise.wasm?url';
 import rnnoiseSimdWasmPath from '@sapphi-red/web-noise-suppressor/rnnoise_simd.wasm?url';
 
+export const DENOISE_SETTINGS = {
+  highpassHz: 90,
+  gateOpenDb: -52,
+  gateCloseDb: -58,
+  gateHoldMs: 120,
+};
+
 let rnnoiseBinaryPromise = null;
 
-// تحميل مسبق للـ WASM Binary مرة واحدة فقط
 export async function getRnnoiseWasmBinary() {
   if (!rnnoiseBinaryPromise) {
     rnnoiseBinaryPromise = loadRnnoise({
@@ -19,101 +30,99 @@ export async function getRnnoiseWasmBinary() {
   return rnnoiseBinaryPromise;
 }
 
-/**
- * تطبيق الـ RNNoise Neural Noise Suppression على MediaStream صوتي
- * @param {MediaStream} rawStream - مسار الصوت الأصلي من المايك
- * @param {AudioContext} [existingCtx] - AudioContext اختياري
- * @returns {Promise<{ cleanStream: MediaStream, audioContext: AudioContext, rnnoiseNode: RnnoiseWorkletNode, isActive: boolean, cleanup: () => void }>}
- */
+const passthrough = (rawStream) => ({
+  cleanStream: rawStream,
+  audioContext: null,
+  rnnoiseNode: null,
+  isActive: false,
+  cleanup: () => {},
+});
+
 export async function applyRnnoiseDenoise(rawStream, existingCtx = null) {
-  const audioTracks = rawStream.getAudioTracks();
-  if (audioTracks.length === 0) {
-    return { cleanStream: rawStream, audioContext: null, rnnoiseNode: null, isActive: false, cleanup: () => {} };
-  }
+  if (rawStream.getAudioTracks().length === 0) return passthrough(rawStream);
 
   let audioContext;
-  let sourceNode;
-  let rnnoiseNode;
+  const nodes = [];
   try {
-    // 1. إنشاء أو استخدام AudioContext بتردد 48000Hz (المطلوب بواسطة RNNoise)
-    audioContext = existingCtx || new (window.AudioContext || window.webkitAudioContext)({
-      sampleRate: 48000,
-      latencyHint: 'interactive'
-    });
-
-    if (audioContext.state === 'suspended') {
-      await audioContext.resume();
+    const AudioContextConstructor = window.AudioContext || window.webkitAudioContext;
+    if (!existingCtx && !AudioContextConstructor) {
+      throw new Error('Web Audio API is not supported.');
     }
 
-    // 2. تحميل الـ WASM و الـ Worklet Processor
+    audioContext = existingCtx || new AudioContextConstructor({
+      sampleRate: 48000,
+      latencyHint: 'interactive',
+    });
+    if (audioContext.state === 'suspended') await audioContext.resume();
+
     const wasmBinary = await getRnnoiseWasmBinary();
     await audioContext.audioWorklet.addModule(rnnoiseWorkletPath);
+    await audioContext.audioWorklet.addModule(noiseGateWorkletPath);
 
-    // 3. إنشاء عقدة الـ RNNoise Worklet
-    rnnoiseNode = new RnnoiseWorkletNode(audioContext, {
+    const sourceNode = audioContext.createMediaStreamSource(rawStream);
+    const highpass = audioContext.createBiquadFilter();
+    highpass.type = 'highpass';
+    highpass.frequency.value = DENOISE_SETTINGS.highpassHz;
+    highpass.Q.value = 0.7;
+
+    const rnnoiseNode = new RnnoiseWorkletNode(audioContext, {
       wasmBinary,
       maxChannels: 1,
     });
-
-    // 4. ربط مسار الصوت: Source -> RNNoise -> Destination
-    sourceNode = audioContext.createMediaStreamSource(rawStream);
+    const gateNode = new NoiseGateWorkletNode(audioContext, {
+      openThreshold: DENOISE_SETTINGS.gateOpenDb,
+      closeThreshold: DENOISE_SETTINGS.gateCloseDb,
+      holdMs: DENOISE_SETTINGS.gateHoldMs,
+      maxChannels: 1,
+    });
     const destinationNode = audioContext.createMediaStreamDestination();
 
-    sourceNode.connect(rnnoiseNode);
-    rnnoiseNode.connect(destinationNode);
+    nodes.push(sourceNode, highpass, rnnoiseNode, gateNode, destinationNode);
+    sourceNode.connect(highpass);
+    highpass.connect(rnnoiseNode);
+    rnnoiseNode.connect(gateNode);
+    gateNode.connect(destinationNode);
 
-    // تجهيز الـ Stream المعالج مع نقل أي فيديو كان موجوداً مسبقاً
     const cleanStream = destinationNode.stream;
-    const processedAudioTrack = cleanStream.getAudioTracks()[0];
-    if (!processedAudioTrack || processedAudioTrack.readyState !== 'live') {
-      throw new Error('RNNoise did not produce a live audio track.');
+    const track = cleanStream.getAudioTracks()[0];
+    if (!track || track.readyState !== 'live') {
+      throw new Error('Denoiser did not produce a live audio track.');
     }
-    rawStream.getVideoTracks().forEach((vTrack) => {
-      cleanStream.addTrack(vTrack);
-    });
+    rawStream.getVideoTracks().forEach((videoTrack) => cleanStream.addTrack(videoTrack));
 
     console.log('[RNNoise] Neural Noise Suppression active 🎙️✨');
 
     const cleanup = () => {
-      try {
-        sourceNode.disconnect();
-        rnnoiseNode.disconnect();
-        if (typeof rnnoiseNode.destroy === 'function') {
-          rnnoiseNode.destroy();
+      nodes.forEach((node) => {
+        try {
+          node.disconnect();
+        } catch (error) {
+          console.warn('[Denoise] Could not disconnect audio node:', error);
         }
-        if (!existingCtx && audioContext.state !== 'closed') {
-          audioContext.close();
-        }
-      } catch (err) {
-        console.warn('[RNNoise] cleanup warning:', err);
+      });
+      rnnoiseNode.destroy?.();
+      if (!existingCtx && audioContext.state !== 'closed') {
+        audioContext.close().catch((error) => {
+          console.warn('[Denoise] Could not close audio context:', error);
+        });
       }
     };
 
-    return {
-      cleanStream,
-      audioContext,
-      rnnoiseNode,
-      isActive: true,
-      cleanup
-    };
-  } catch (err) {
-    console.error('[RNNoise] Failed to initialize noise suppression, falling back to raw stream:', err);
-    try {
-      sourceNode?.disconnect();
-      rnnoiseNode?.disconnect();
-      rnnoiseNode?.destroy?.();
-      if (!existingCtx && audioContext && audioContext.state !== 'closed') {
-        await audioContext.close();
+    return { cleanStream, audioContext, rnnoiseNode, isActive: true, cleanup };
+  } catch (error) {
+    console.error('[Denoise] init failed, using raw stream:', error);
+    nodes.forEach((node) => {
+      try {
+        node.disconnect();
+      } catch (cleanupError) {
+        console.warn('[Denoise] Could not disconnect an audio node:', cleanupError);
       }
-    } catch (cleanupError) {
-      console.warn('[RNNoise] Failed to clean up an incomplete denoiser:', cleanupError);
+    });
+    if (!existingCtx && audioContext && audioContext.state !== 'closed') {
+      await audioContext.close().catch((cleanupError) => {
+        console.warn('[Denoise] Could not close audio context:', cleanupError);
+      });
     }
-    return {
-      cleanStream: rawStream,
-      audioContext: null,
-      rnnoiseNode: null,
-      isActive: false,
-      cleanup: () => {}
-    };
+    return passthrough(rawStream);
   }
 }

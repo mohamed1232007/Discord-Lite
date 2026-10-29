@@ -47,6 +47,17 @@ const getSavedAudioDevice = (storageKey) => {
   }
 };
 
+const applyNativeNoiseFallback = async (stream) => {
+  const track = stream?.getAudioTracks()[0];
+  if (!track) return;
+
+  try {
+    await track.applyConstraints({ noiseSuppression: true, autoGainControl: true });
+  } catch (error) {
+    console.warn('[Audio] Could not enable native noise suppression fallback:', error);
+  }
+};
+
 export const VoiceProvider = ({ children }) => {
   const { user, token } = useAuth();
   const toast = useToast();
@@ -442,8 +453,10 @@ export const VoiceProvider = ({ children }) => {
           audio: {
             deviceId: deviceId !== 'default' ? { exact: deviceId } : undefined,
             echoCancellation: true,
-            noiseSuppression: true,
-            autoGainControl: true,
+            noiseSuppression: false,
+            autoGainControl: false,
+            channelCount: 1,
+            sampleRate: 48000,
           },
         });
         rawMicStreamRef.current?.getTracks().forEach((track) => track.stop());
@@ -457,6 +470,7 @@ export const VoiceProvider = ({ children }) => {
           noiseSuppressionActiveRef.current = isActive;
           setIsNoiseSuppressionActive(isActive);
           if (!isActive) {
+            await applyNativeNoiseFallback(newRawStream);
             toast.warning('AI noise suppression could not start on the selected microphone.');
           }
         } else {
@@ -632,8 +646,10 @@ export const VoiceProvider = ({ children }) => {
     try {
       const audioConstraints = {
         echoCancellation: true,
-        noiseSuppression: true,
-        autoGainControl: true,
+        noiseSuppression: false,
+        autoGainControl: false,
+        channelCount: 1,
+        sampleRate: 48000,
       };
       if (selectedMic && selectedMic !== 'default') {
         audioConstraints.deviceId = { exact: selectedMic };
@@ -667,12 +683,14 @@ export const VoiceProvider = ({ children }) => {
           noiseSuppressionActiveRef.current = isActive;
           setIsNoiseSuppressionActive(isActive);
           if (!isActive) {
+            await applyNativeNoiseFallback(rawStream);
             toast.warning('AI noise suppression is unavailable; microphone noise reduction remains enabled.');
           }
         } catch (e) {
           console.warn('[RNNoise] Failed to apply denoiser on mic, using raw:', e);
           noiseSuppressionActiveRef.current = false;
           setIsNoiseSuppressionActive(false);
+          await applyNativeNoiseFallback(rawStream);
           toast.warning('AI noise suppression is unavailable; microphone noise reduction remains enabled.');
         }
       } else {
@@ -1582,6 +1600,7 @@ export const VoiceProvider = ({ children }) => {
           noiseSuppressionActiveRef.current = isActive;
           setIsNoiseSuppressionActive(isActive);
           if (!isActive) {
+            await applyNativeNoiseFallback(rawMicStreamRef.current);
             toast.warning('AI noise suppression could not start; microphone noise reduction remains enabled.');
           }
         } else {
