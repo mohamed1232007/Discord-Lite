@@ -147,7 +147,6 @@ export default function DMSidebar({ selectedChat, onSelectChat, onShowCall, onOp
             <ShoppingBag size={18} className="text-[#dbdee1]" />
             <span>Shop</span>
           </div>
-          <span className="bg-[#5865f2] text-white text-[10px] font-bold px-1.5 py-0.5 rounded-full">NEW</span>
         </button>
 
         <button 
@@ -159,7 +158,6 @@ export default function DMSidebar({ selectedChat, onSelectChat, onShowCall, onOp
             <Compass size={18} className="text-[#dbdee1]" />
             <span>Quests</span>
           </div>
-          <span className="bg-[#5865f2] text-white text-[10px] font-bold px-1.5 py-0.5 rounded-full">NEW</span>
         </button>
 
         {/* ── Direct Messages Header ── */}
@@ -352,246 +350,248 @@ export default function DMSidebar({ selectedChat, onSelectChat, onShowCall, onOp
           </div>
         )}
 
-        {/* ── User Footer Profile (طابق دقيق 100% مع الصورة) ── */}
-        <div className="h-14 px-2 flex items-center justify-between text-[#dbdee1]">
-          {user ? (
-            <div
-              className="flex items-center gap-2 p-1 rounded hover:bg-[#18191c] cursor-pointer min-w-0 pr-1"
-              title={`@${currentUsername}`}
-            >
-              {/* Profile Avatar with Status Dot */}
-              <div className="relative shrink-0">
-                <div className={`w-8 h-8 rounded-full bg-[#1e1f22] flex items-center justify-center text-white text-xs font-semibold overflow-hidden ${
-                  activeCall ? 'border-2 border-[#23a55a]' : ''
-                }`}>
-                  {user.avatar_url ? (
-                    <img src={user.avatar_url} alt={currentDisplayName} className="w-full h-full object-cover" />
-                  ) : (
-                    currentDisplayName.substring(0, 2).toUpperCase()
-                  )}
-                </div>
-                <span className="absolute -bottom-0.5 -right-0.5 w-2.5 h-2.5 rounded-full border-2 border-[#070708] bg-[#23a55a]" />
-              </div>
-
-              {/* Username & Subtitle */}
-              <div className="min-w-0">
-                <div className="text-[13px] font-semibold text-white truncate leading-tight">{currentDisplayName}</div>
-                {activeCall ? (
-                  <div className="text-[11px] text-[#23a55a] font-normal flex items-center gap-1 leading-tight mt-0.5">
-                    <span className="text-[10px]">🔊</span>
-                    <span>In voice</span>
-                  </div>
-                ) : (
-                  <div className="text-[11px] text-[#949ba4] font-normal truncate leading-tight mt-0.5">
-                    Online
-                  </div>
-                )}
-              </div>
-            </div>
-          ) : (
-            <button
-              type="button"
-              onClick={onOpenAuth}
-              className="flex items-center gap-2 px-3 py-1.5 bg-[#5865f2] hover:bg-[#4752c4] text-white text-xs font-semibold rounded transition cursor-pointer"
-            >
-              <LogIn size={14} />
-              <span>Log In / Sign Up</span>
-            </button>
-          )}
-
-          {/* Action Buttons: مضغوطة بنعومة زي ديسكورد بالظبط */}
-          <div className="flex items-center text-[#b5bac1] shrink-0">
+        {/* ── User Footer Profile ── */}
+        <div className="relative z-30 -ml-16 w-[calc(100%+4rem)] shrink-0 px-2 pb-2">
+          <div className="flex h-16 w-full items-center justify-between rounded-xl border border-[#1e1f22] bg-[#050506] px-3 text-[#dbdee1]">
             {user ? (
-              <>
-                {/* Mute Split Button with Devices Dropdown */}
-                <div className="relative" ref={micMenuRef}>
-                  <div className={`flex items-center rounded transition ${
-                    isMuted 
-                      ? 'bg-[#3c191a] text-[#f23f43]' 
-                      : 'hover:bg-[#18191c] text-[#dbdee1] hover:text-white'
-                  }`}>
-                    <button
-                      type="button"
-                      onClick={toggleMute}
-                      className="p-1 cursor-pointer flex items-center justify-center"
-                      title={isMuted ? 'Unmute' : 'Mute'}
-                    >
-                      {isMuted ? <MicOff size={17} className="text-[#f23f43]" /> : <Mic size={17} />}
-                    </button>
-                    <button
-                      type="button"
-                      onClick={() => {
-                        updateAudioDevices?.();
-                        setShowMicMenu((prev) => !prev);
-                        setShowSpeakerMenu(false);
-                        setShowSettingsMenu(false);
-                      }}
-                      className="pr-1 py-1 cursor-pointer flex items-center justify-center text-[#80848e] hover:text-white"
-                      title="Select Input Device"
-                    >
-                      <ChevronDown size={11} className={isMuted ? 'text-[#f23f43]' : ''} />
-                    </button>
-                  </div>
-
-                  {/* Microphone Devices Menu */}
-                  {showMicMenu && (
-                    <div className="absolute bottom-9 left-0 w-60 bg-[#111214] border border-[#2b2d31] rounded-xl shadow-2xl p-2 z-50 flex flex-col gap-1 animate-in fade-in slide-in-from-bottom-2 duration-150">
-                      <div className="text-[10px] font-bold tracking-wider text-[#80848e] uppercase px-2 py-1">
-                        Input Device (Microphone)
-                      </div>
-                      <div className="max-h-48 overflow-y-auto discord-scrollbar flex flex-col gap-0.5">
-                        {microphones.length === 0 ? (
-                          <div className="text-xs text-[#80848e] px-2 py-1.5">Default Microphone</div>
-                        ) : (
-                          microphones.map((mic) => {
-                            const isSelected = selectedMic === mic.deviceId;
-                            return (
-                              <button
-                                key={mic.deviceId}
-                                type="button"
-                                onClick={() => {
-                                  changeMicrophone(mic.deviceId);
-                                  setShowMicMenu(false);
-                                }}
-                                className={`w-full flex items-center justify-between gap-2 px-2.5 py-1.5 text-xs rounded-lg transition text-left cursor-pointer ${
-                                  isSelected
-                                    ? 'bg-[#5865f2] text-white font-semibold'
-                                    : 'text-[#dbdee1] hover:bg-[#1e1f22] hover:text-white'
-                                }`}
-                              >
-                                <span className="truncate">{mic.label}</span>
-                                {isSelected && <Check size={14} className="shrink-0" />}
-                              </button>
-                            );
-                          })
-                        )}
-                      </div>
-                    </div>
-                  )}
-                </div>
-
-                {/* Deafen Split Button with Devices Dropdown */}
-                <div className="relative" ref={speakerMenuRef}>
-                  <div className={`flex items-center rounded transition ${
-                    isDeafened 
-                      ? 'bg-[#3c191a] text-[#f23f43]' 
-                      : 'hover:bg-[#18191c] text-[#dbdee1] hover:text-white'
-                  }`}>
-                    <button
-                      type="button"
-                      onClick={toggleDeafen}
-                      className="p-1 cursor-pointer flex items-center justify-center"
-                      title={isDeafened ? 'Undeafen' : 'Deafen'}
-                    >
-                      {isDeafened ? <VolumeX size={17} className="text-[#f23f43]" /> : <Headphones size={17} />}
-                    </button>
-                    <button
-                      type="button"
-                      onClick={() => {
-                        updateAudioDevices?.();
-                        setShowSpeakerMenu((prev) => !prev);
-                        setShowMicMenu(false);
-                        setShowSettingsMenu(false);
-                      }}
-                      className="pr-1 py-1 cursor-pointer flex items-center justify-center text-[#80848e] hover:text-white"
-                      title="Select Output Device"
-                    >
-                      <ChevronDown size={11} className={isDeafened ? 'text-[#f23f43]' : ''} />
-                    </button>
-                  </div>
-
-                  {/* Speaker Devices Menu */}
-                  {showSpeakerMenu && (
-                    <div className="absolute bottom-9 left-0 w-60 bg-[#111214] border border-[#2b2d31] rounded-xl shadow-2xl p-2 z-50 flex flex-col gap-1 animate-in fade-in slide-in-from-bottom-2 duration-150">
-                      <div className="text-[10px] font-bold tracking-wider text-[#80848e] uppercase px-2 py-1">
-                        Output Device (Speaker)
-                      </div>
-                      <div className="max-h-48 overflow-y-auto discord-scrollbar flex flex-col gap-0.5">
-                        {speakers.length === 0 ? (
-                          <div className="text-xs text-[#80848e] px-2 py-1.5">Default Speaker</div>
-                        ) : (
-                          speakers.map((spk) => {
-                            const isSelected = selectedSpeaker === spk.deviceId;
-                            return (
-                              <button
-                                key={spk.deviceId}
-                                type="button"
-                                onClick={() => {
-                                  changeSpeaker(spk.deviceId);
-                                  setShowSpeakerMenu(false);
-                                }}
-                                className={`w-full flex items-center justify-between gap-2 px-2.5 py-1.5 text-xs rounded-lg transition text-left cursor-pointer ${
-                                  isSelected
-                                    ? 'bg-[#5865f2] text-white font-semibold'
-                                    : 'text-[#dbdee1] hover:bg-[#1e1f22] hover:text-white'
-                                }`}
-                              >
-                                <span className="truncate">{spk.label}</span>
-                                {isSelected && <Check size={14} className="shrink-0" />}
-                              </button>
-                            );
-                          })
-                        )}
-                      </div>
-                    </div>
-                  )}
-                </div>
-
-                {/* Settings Gear with Dropdown Menu */}
-                <div className="relative" ref={settingsMenuRef}>
-                  <button
-                    type="button"
-                    onClick={() => setShowSettingsMenu((prev) => !prev)}
-                    className={`p-1 rounded transition cursor-pointer ${
-                      showSettingsMenu ? 'bg-[#18191c] text-white' : 'hover:bg-[#18191c] hover:text-white'
-                    }`}
-                    title="User Settings"
-                  >
-                    <Settings size={17} />
-                  </button>
-
-                  {/* Settings Popup Menu */}
-                  {showSettingsMenu && (
-                    <div className="absolute bottom-9 right-0 w-44 bg-[#111214] border border-[#2b2d31] rounded-xl shadow-2xl p-1.5 z-50 flex flex-col gap-0.5 animate-in fade-in slide-in-from-bottom-2 duration-150">
-                      <button
-                        type="button"
-                        onClick={() => {
-                          setShowSettingsMenu(false);
-                          setShowSettings(true);
-                        }}
-                        className="w-full flex items-center gap-2.5 px-2.5 py-1.5 text-xs text-[#dbdee1] hover:text-white hover:bg-[#5865f2] rounded-lg transition text-left cursor-pointer font-medium"
-                      >
-                        <Settings size={14} />
-                        <span>Settings</span>
-                      </button>
-
-                      <div className="w-full h-[1px] bg-[#1e1f22] my-0.5" />
-
-                      <button
-                        type="button"
-                        onClick={() => {
-                          setShowSettingsMenu(false);
-                          signOut();
-                        }}
-                        className="w-full flex items-center gap-2.5 px-2.5 py-1.5 text-xs text-[#f23f43] hover:text-white hover:bg-[#f23f43] rounded-lg transition text-left cursor-pointer font-medium"
-                      >
-                        <LogOut size={14} />
-                        <span>Log Out</span>
-                      </button>
-                    </div>
-                  )}
-                </div>
-              </>
-            ) : (
-              <button 
-                type="button" 
-                onClick={onOpenAuth}
-                className="p-1.5 hover:bg-[#18191c] hover:text-white rounded transition cursor-pointer" 
-                title="Log In"
+              <div
+                className="flex items-center gap-3 min-w-0 flex-1"
+                title={`@${currentUsername}`}
               >
-                <LogIn size={17} />
+                <div className="relative h-9 w-9 shrink-0">
+                  <div className="h-9 w-9 overflow-hidden rounded-full bg-[#1e1f22] flex items-center justify-center text-xs font-semibold text-white">
+                    {user.avatar_url ? (
+                      <img
+                        src={user.avatar_url}
+                        alt={currentDisplayName}
+                        className="h-full w-full object-cover"
+                      />
+                    ) : (
+                      currentDisplayName.substring(0, 2).toUpperCase()
+                    )}
+                  </div>
+                  <span className="absolute -bottom-0.5 -right-0.5 h-3 w-3 rounded-full border-2 border-[#050506] bg-[#23a55a]" />
+                </div>
+
+                <div className="min-w-0 leading-tight">
+                  <div className="text-sm font-semibold text-[#dbdee1] truncate">{currentDisplayName}</div>
+                  {activeCall ? (
+                    <div className="text-[11px] text-[#949ba4] font-normal flex items-center gap-1 leading-tight mt-0.5">
+                      <span className="w-2 h-2 rounded-full bg-[#23a55a] shrink-0" />
+                      In voice
+                    </div>
+                  ) : (
+                    <div className="text-[11px] text-[#949ba4] font-normal flex items-center gap-1 leading-tight mt-0.5">
+                      <span className="w-2 h-2 rounded-full bg-[#23a55a] shrink-0" />
+                      Online
+                    </div>
+                  )}
+                </div>
+              </div>
+            ) : (
+              <button
+                type="button"
+                onClick={onOpenAuth}
+                className="flex items-center gap-2 px-3 py-1.5 bg-[#5865f2] hover:bg-[#4752c4] text-white text-xs font-semibold rounded transition cursor-pointer"
+              >
+                <LogIn size={14} />
+                <span>Log In / Sign Up</span>
               </button>
             )}
+
+            <div className="flex items-center gap-1 text-[#b5bac1] shrink-0">
+              {user ? (
+                <>
+                  {/* Mute Split Button with Devices Dropdown */}
+                  <div className="relative" ref={micMenuRef}>
+                    <div className={`flex items-center rounded transition ${
+                      isMuted
+                        ? 'bg-[#3c191a] text-[#f23f43]'
+                        : 'hover:bg-[#18191c] text-[#949ba4] hover:text-white'
+                    }`}>
+                      <button
+                        type="button"
+                        onClick={toggleMute}
+                        className="p-1.5 cursor-pointer flex items-center justify-center"
+                        title={isMuted ? 'Unmute' : 'Mute'}
+                      >
+                        {isMuted ? <MicOff size={17} className="text-[#f23f43]" /> : <Mic size={17} />}
+                      </button>
+                      <button
+                        type="button"
+                        onClick={() => {
+                          updateAudioDevices?.();
+                          setShowMicMenu((prev) => !prev);
+                          setShowSpeakerMenu(false);
+                          setShowSettingsMenu(false);
+                        }}
+                        className="pr-1.5 py-1.5 cursor-pointer flex items-center justify-center text-[#80848e] hover:text-white"
+                        title="Select Input Device"
+                      >
+                        <ChevronDown size={11} className={isMuted ? 'text-[#f23f43]' : ''} />
+                      </button>
+                    </div>
+
+                    {/* Microphone Devices Menu */}
+                    {showMicMenu && (
+                      <div className="absolute bottom-9 left-0 w-60 bg-[#111214] border border-[#2b2d31] rounded-xl shadow-2xl p-2 z-50 flex flex-col gap-1 animate-in fade-in slide-in-from-bottom-2 duration-150">
+                        <div className="text-[10px] font-bold tracking-wider text-[#80848e] uppercase px-2 py-1">
+                          Input Device (Microphone)
+                        </div>
+                        <div className="max-h-48 overflow-y-auto discord-scrollbar flex flex-col gap-0.5">
+                          {microphones.length === 0 ? (
+                            <div className="text-xs text-[#80848e] px-2 py-1.5">Default Microphone</div>
+                          ) : (
+                            microphones.map((mic) => {
+                              const isSelected = selectedMic === mic.deviceId;
+                              return (
+                                <button
+                                  key={mic.deviceId}
+                                  type="button"
+                                  onClick={() => {
+                                    changeMicrophone(mic.deviceId);
+                                    setShowMicMenu(false);
+                                  }}
+                                  className={`w-full flex items-center justify-between gap-2 px-2.5 py-1.5 text-xs rounded-lg transition text-left cursor-pointer ${
+                                    isSelected
+                                      ? 'bg-[#5865f2] text-white font-semibold'
+                                      : 'text-[#dbdee1] hover:bg-[#1e1f22] hover:text-white'
+                                  }`}
+                                >
+                                  <span className="truncate">{mic.label}</span>
+                                  {isSelected && <Check size={14} className="shrink-0" />}
+                                </button>
+                              );
+                            })
+                          )}
+                        </div>
+                      </div>
+                    )}
+                  </div>
+
+                  {/* Deafen Split Button with Devices Dropdown */}
+                  <div className="relative" ref={speakerMenuRef}>
+                    <div className={`flex items-center rounded transition ${
+                      isDeafened
+                        ? 'bg-[#3c191a] text-[#f23f43]'
+                        : 'hover:bg-[#18191c] text-[#949ba4] hover:text-white'
+                    }`}>
+                      <button
+                        type="button"
+                        onClick={toggleDeafen}
+                        className="p-1.5 cursor-pointer flex items-center justify-center"
+                        title={isDeafened ? 'Undeafen' : 'Deafen'}
+                      >
+                        {isDeafened ? <VolumeX size={17} className="text-[#f23f43]" /> : <Headphones size={17} />}
+                      </button>
+                      <button
+                        type="button"
+                        onClick={() => {
+                          updateAudioDevices?.();
+                          setShowSpeakerMenu((prev) => !prev);
+                          setShowMicMenu(false);
+                          setShowSettingsMenu(false);
+                        }}
+                        className="pr-1.5 py-1.5 cursor-pointer flex items-center justify-center text-[#80848e] hover:text-white"
+                        title="Select Output Device"
+                      >
+                        <ChevronDown size={11} className={isDeafened ? 'text-[#f23f43]' : ''} />
+                      </button>
+                    </div>
+
+                    {/* Speaker Devices Menu */}
+                    {showSpeakerMenu && (
+                      <div className="absolute bottom-9 left-0 w-60 bg-[#111214] border border-[#2b2d31] rounded-xl shadow-2xl p-2 z-50 flex flex-col gap-1 animate-in fade-in slide-in-from-bottom-2 duration-150">
+                        <div className="text-[10px] font-bold tracking-wider text-[#80848e] uppercase px-2 py-1">
+                          Output Device (Speaker)
+                        </div>
+                        <div className="max-h-48 overflow-y-auto discord-scrollbar flex flex-col gap-0.5">
+                          {speakers.length === 0 ? (
+                            <div className="text-xs text-[#80848e] px-2 py-1.5">Default Speaker</div>
+                          ) : (
+                            speakers.map((spk) => {
+                              const isSelected = selectedSpeaker === spk.deviceId;
+                              return (
+                                <button
+                                  key={spk.deviceId}
+                                  type="button"
+                                  onClick={() => {
+                                    changeSpeaker(spk.deviceId);
+                                    setShowSpeakerMenu(false);
+                                  }}
+                                  className={`w-full flex items-center justify-between gap-2 px-2.5 py-1.5 text-xs rounded-lg transition text-left cursor-pointer ${
+                                    isSelected
+                                      ? 'bg-[#5865f2] text-white font-semibold'
+                                      : 'text-[#dbdee1] hover:bg-[#1e1f22] hover:text-white'
+                                  }`}
+                                >
+                                  <span className="truncate">{spk.label}</span>
+                                  {isSelected && <Check size={14} className="shrink-0" />}
+                                </button>
+                              );
+                            })
+                          )}
+                        </div>
+                      </div>
+                    )}
+                  </div>
+
+                  {/* Settings Gear with Dropdown Menu */}
+                  <div className="relative" ref={settingsMenuRef}>
+                    <button
+                      type="button"
+                      onClick={() => setShowSettingsMenu((prev) => !prev)}
+                      className={`p-1.5 rounded transition cursor-pointer ${
+                        showSettingsMenu ? 'bg-[#18191c] text-white' : 'hover:bg-[#18191c] hover:text-white'
+                      }`}
+                      title="User Settings"
+                    >
+                      <Settings size={17} />
+                    </button>
+
+                    {/* Settings Popup Menu */}
+                    {showSettingsMenu && (
+                      <div className="absolute bottom-9 right-0 w-44 bg-[#111214] border border-[#2b2d31] rounded-xl shadow-2xl p-1.5 z-50 flex flex-col gap-0.5 animate-in fade-in slide-in-from-bottom-2 duration-150">
+                        <button
+                          type="button"
+                          onClick={() => {
+                            setShowSettingsMenu(false);
+                            setShowSettings(true);
+                          }}
+                          className="w-full flex items-center gap-2.5 px-2.5 py-1.5 text-xs text-[#dbdee1] hover:text-white hover:bg-[#5865f2] rounded-lg transition text-left cursor-pointer font-medium"
+                        >
+                          <Settings size={14} />
+                          <span>Settings</span>
+                        </button>
+
+                        <div className="w-full h-[1px] bg-[#1e1f22] my-0.5" />
+
+                        <button
+                          type="button"
+                          onClick={() => {
+                            setShowSettingsMenu(false);
+                            signOut();
+                          }}
+                          className="w-full flex items-center gap-2.5 px-2.5 py-1.5 text-xs text-[#f23f43] hover:text-white hover:bg-[#f23f43] rounded-lg transition text-left cursor-pointer font-medium"
+                        >
+                          <LogOut size={14} />
+                          <span>Log Out</span>
+                        </button>
+                      </div>
+                    )}
+                  </div>
+                </>
+              ) : (
+                <button
+                  type="button"
+                  onClick={onOpenAuth}
+                  className="p-1.5 hover:bg-[#18191c] hover:text-white rounded transition cursor-pointer"
+                  title="Log In"
+                >
+                  <LogIn size={17} />
+                </button>
+              )}
+            </div>
           </div>
         </div>
       </div>

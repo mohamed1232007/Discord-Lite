@@ -13,6 +13,9 @@ const TURN_CREDENTIAL = import.meta.env.VITE_TURN_CREDENTIAL;
 const SELECTED_MIC_STORAGE_KEY = 'dis_lite_selected_mic';
 const SELECTED_SPEAKER_STORAGE_KEY = 'dis_lite_selected_speaker';
 const PARTICIPANT_AUDIO_STORAGE_KEY = 'dis_lite_participant_audio';
+const NOISE_LEVEL_STORAGE_KEY = 'dis_lite_noise_level';
+const NOISE_LEVELS = ['standard', 'strong', 'max'];
+const NOISE_LEVEL_LABELS = { standard: 'Standard', strong: 'Strong', max: 'Maximum' };
 
 const getSavedParticipantAudio = () => {
   try {
@@ -44,6 +47,16 @@ const getSavedAudioDevice = (storageKey) => {
   } catch (error) {
     console.warn('[Audio] Could not restore saved device selection:', error);
     return 'default';
+  }
+};
+
+const getSavedNoiseLevel = () => {
+  try {
+    const saved = window.localStorage.getItem(NOISE_LEVEL_STORAGE_KEY);
+    return NOISE_LEVELS.includes(saved) ? saved : 'standard';
+  } catch (error) {
+    console.warn('[Audio] Could not restore noise suppression level:', error);
+    return 'standard';
   }
 };
 
@@ -86,6 +99,7 @@ export const VoiceProvider = ({ children }) => {
   const [participantAudioSettings, setParticipantAudioSettings] = useState(getSavedParticipantAudio);
   const [isNoiseSuppressionEnabled, setIsNoiseSuppressionEnabled] = useState(true);
   const [isNoiseSuppressionActive, setIsNoiseSuppressionActive] = useState(false);
+  const [noiseLevel, setNoiseLevel] = useState(getSavedNoiseLevel);
 
   // ── Refs (لا تتغيرش بين renders) ──────────────────────
   const peerRef         = useRef(null);      // PeerJS instance
@@ -127,10 +141,20 @@ export const VoiceProvider = ({ children }) => {
   const offlineTimersRef = useRef(new Map());
   const turnWarningShownRef = useRef(false);
   const OFFLINE_GRACE_MS = 10_000;
+  const noiseLevelRef = useRef(noiseLevel);
 
   useEffect(() => {
     onlineUsersRef.current = onlineUsers;
   }, [onlineUsers]);
+
+  useEffect(() => {
+    noiseLevelRef.current = noiseLevel;
+    try {
+      window.localStorage.setItem(NOISE_LEVEL_STORAGE_KEY, noiseLevel);
+    } catch (error) {
+      console.error('[Audio] Could not save noise suppression level:', error);
+    }
+  }, [noiseLevel]);
 
   const warnIfTurnIsUnavailable = () => {
     if (TURN_USERNAME && TURN_CREDENTIAL) return;
@@ -471,7 +495,11 @@ export const VoiceProvider = ({ children }) => {
 
         let finalAudioTrack;
         if (isNoiseSuppressionEnabled) {
-          const { cleanStream, cleanup, isActive } = await applyRnnoiseDenoise(newRawStream);
+          const { cleanStream, cleanup, isActive } = await applyRnnoiseDenoise(
+            newRawStream,
+            null,
+            noiseLevelRef.current,
+          );
           denoiseCleanupRef.current = cleanup;
           finalAudioTrack = cleanStream.getAudioTracks()[0] || newRawStream.getAudioTracks()[0];
           noiseSuppressionActiveRef.current = isActive;
@@ -684,7 +712,11 @@ export const VoiceProvider = ({ children }) => {
       let processedStream = rawStream;
       if (isNoiseSuppressionEnabled) {
         try {
-          const { cleanStream, cleanup, isActive } = await applyRnnoiseDenoise(rawStream);
+          const { cleanStream, cleanup, isActive } = await applyRnnoiseDenoise(
+            rawStream,
+            null,
+            noiseLevelRef.current,
+          );
           denoiseCleanupRef.current = cleanup;
           processedStream = cleanStream;
           noiseSuppressionActiveRef.current = isActive;
@@ -1656,66 +1688,75 @@ export const VoiceProvider = ({ children }) => {
     }
   };
 
-  // دالة تشغيل / إيقاف خاصية عزل الضوضاء بالذكاء الاصطناعي (RNNoise)
-  const toggleNoiseSuppression = async () => {
-    const nextVal = !isNoiseSuppressionEnabled;
-    setIsNoiseSuppressionEnabled(nextVal);
-    toast.info(nextVal ? 'AI Noise Suppression enabled' : 'AI Noise Suppression disabled');
+  const applyLiveNoiseSuppression = async (enabled, level) => {
+    const roomId = activeCallRef.current?.roomId;
+    if (!roomId || !rawMicStreamRef.current || !localStreamRef.current) return;
 
-    if (activeCall && rawMicStreamRef.current && localStreamRef.current) {
-      try {
-        if (denoiseCleanupRef.current) {
-          denoiseCleanupRef.current();
-          denoiseCleanupRef.current = null;
+    try {
+      denoiseCleanupRef.current?.();
+      denoiseCleanupRef.current = null;
+
+      let finalAudioTrack;
+      if (enabled) {
+        const { cleanStream, cleanup, isActive } = await applyRnnoiseDenoise(
+          rawMicStreamRef.current,
+          null,
+          level,
+        );
+        denoiseCleanupRef.current = cleanup;
+        finalAudioTrack = cleanStream.getAudioTracks()[0] || rawMicStreamRef.current.getAudioTracks()[0];
+        noiseSuppressionActiveRef.current = isActive;
+        setIsNoiseSuppressionActive(isActive);
+        if (!isActive) {
+          await applyNativeNoiseFallback(rawMicStreamRef.current);
+          toast.warning('AI noise suppression could not start; microphone noise reduction remains enabled.');
         }
-
-        let finalAudioTrack;
-        if (nextVal) {
-          const { cleanStream, cleanup, isActive } = await applyRnnoiseDenoise(rawMicStreamRef.current);
-          denoiseCleanupRef.current = cleanup;
-          finalAudioTrack = cleanStream.getAudioTracks()[0] || rawMicStreamRef.current.getAudioTracks()[0];
-          noiseSuppressionActiveRef.current = isActive;
-          setIsNoiseSuppressionActive(isActive);
-          if (!isActive) {
-            await applyNativeNoiseFallback(rawMicStreamRef.current);
-            toast.warning('AI noise suppression could not start; microphone noise reduction remains enabled.');
-          }
-        } else {
-          finalAudioTrack = rawMicStreamRef.current.getAudioTracks()[0];
-          noiseSuppressionActiveRef.current = false;
-          setIsNoiseSuppressionActive(false);
-        }
-        publishCallState({ noiseSuppressionActive: noiseSuppressionActiveRef.current });
-
-        if (finalAudioTrack) {
-          finalAudioTrack.enabled = !isMuted;
-          const oldTrack = localStreamRef.current.getAudioTracks()[0];
-          if (oldTrack && oldTrack !== finalAudioTrack) {
-            localStreamRef.current.removeTrack(oldTrack);
-          }
-          if (!localStreamRef.current.getAudioTracks().includes(finalAudioTrack)) {
-            localStreamRef.current.addTrack(finalAudioTrack);
-          }
-
-          await replacePeerTrack('audio', finalAudioTrack);
-
-          await callApi(token, `/${activeCall.roomId}/noise`, {
-            method: 'PATCH',
-            body: { enabled: noiseSuppressionActiveRef.current },
-          });
-          const updatedParticipants = callParticipantsRef.current.map((participant) => (
-            participant.user_id === user.id
-              ? { ...participant, noise_suppression_enabled: noiseSuppressionActiveRef.current }
-              : participant
-          ));
-          callParticipantsRef.current = updatedParticipants;
-          setCallParticipants(updatedParticipants);
-        }
-      } catch (err) {
-        console.error('[toggleNoiseSuppression] live switch failed:', err);
-        toast.error('Could not change noise suppression for the live call.');
+      } else {
+        finalAudioTrack = rawMicStreamRef.current.getAudioTracks()[0];
+        noiseSuppressionActiveRef.current = false;
+        setIsNoiseSuppressionActive(false);
       }
+      publishCallState({ noiseSuppressionActive: noiseSuppressionActiveRef.current });
+
+      if (!finalAudioTrack) return;
+      finalAudioTrack.enabled = !isMuted;
+      const oldTrack = localStreamRef.current.getAudioTracks()[0];
+      if (oldTrack && oldTrack !== finalAudioTrack) localStreamRef.current.removeTrack(oldTrack);
+      if (!localStreamRef.current.getAudioTracks().includes(finalAudioTrack)) {
+        localStreamRef.current.addTrack(finalAudioTrack);
+      }
+      await replacePeerTrack('audio', finalAudioTrack);
+      await callApi(token, `/${roomId}/noise`, {
+        method: 'PATCH',
+        body: { enabled: noiseSuppressionActiveRef.current },
+      });
+
+      const updatedParticipants = callParticipantsRef.current.map((participant) => (
+        participant.user_id === user.id
+          ? { ...participant, noise_suppression_enabled: noiseSuppressionActiveRef.current }
+          : participant
+      ));
+      callParticipantsRef.current = updatedParticipants;
+      setCallParticipants(updatedParticipants);
+    } catch (error) {
+      console.error('[NoiseSuppression] live switch failed:', error);
+      toast.error('Could not change noise suppression for the live call.');
     }
+  };
+
+  const toggleNoiseSuppression = async () => {
+    const next = !isNoiseSuppressionEnabled;
+    setIsNoiseSuppressionEnabled(next);
+    toast.info(next ? 'AI Noise Suppression enabled' : 'AI Noise Suppression disabled');
+    await applyLiveNoiseSuppression(next, noiseLevelRef.current);
+  };
+
+  const changeNoiseLevel = async (level) => {
+    if (!NOISE_LEVELS.includes(level) || level === noiseLevelRef.current) return;
+    noiseLevelRef.current = level;
+    setNoiseLevel(level);
+    toast.info(`Noise suppression: ${NOISE_LEVEL_LABELS[level]}`);
+    if (isNoiseSuppressionEnabled) await applyLiveNoiseSuppression(true, level);
   };
 
   // ─────────────────────────────────────────────────────
@@ -1738,7 +1779,9 @@ export const VoiceProvider = ({ children }) => {
       isRemoteCamera,
       isNoiseSuppressionEnabled,
       isNoiseSuppressionActive,
+      noiseLevel,
       toggleNoiseSuppression,
+      changeNoiseLevel,
       microphones,
       speakers,
       selectedMic,

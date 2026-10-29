@@ -1,10 +1,14 @@
 import {
-  RnnoiseWorkletNode,
+  GtcrnWorkletNode,
   NoiseGateWorkletNode,
+  RnnoiseWorkletNode,
+  loadGtcrn,
   loadRnnoise,
 } from '@sapphi-red/web-noise-suppressor';
-import rnnoiseWorkletPath from '@sapphi-red/web-noise-suppressor/rnnoiseWorklet.js?url';
+import gtcrnWorkletPath from '@sapphi-red/web-noise-suppressor/gtcrnWorklet.js?url';
 import noiseGateWorkletPath from '@sapphi-red/web-noise-suppressor/noiseGateWorklet.js?url';
+import rnnoiseWorkletPath from '@sapphi-red/web-noise-suppressor/rnnoiseWorklet.js?url';
+import gtcrnWasmPath from '@sapphi-red/web-noise-suppressor/gtcrn.wasm?url';
 import rnnoiseWasmPath from '@sapphi-red/web-noise-suppressor/rnnoise.wasm?url';
 import rnnoiseSimdWasmPath from '@sapphi-red/web-noise-suppressor/rnnoise_simd.wasm?url';
 
@@ -16,8 +20,9 @@ export const DENOISE_SETTINGS = {
 };
 
 let rnnoiseBinaryPromise = null;
+let gtcrnBinaryPromise = null;
 
-export async function getRnnoiseWasmBinary() {
+const getRnnoiseWasmBinary = () => {
   if (!rnnoiseBinaryPromise) {
     rnnoiseBinaryPromise = loadRnnoise({
       url: rnnoiseWasmPath,
@@ -28,7 +33,17 @@ export async function getRnnoiseWasmBinary() {
     });
   }
   return rnnoiseBinaryPromise;
-}
+};
+
+const getGtcrnWasmBinary = () => {
+  if (!gtcrnBinaryPromise) {
+    gtcrnBinaryPromise = loadGtcrn({ url: gtcrnWasmPath }).catch((error) => {
+      gtcrnBinaryPromise = null;
+      throw error;
+    });
+  }
+  return gtcrnBinaryPromise;
+};
 
 const passthrough = (rawStream) => ({
   cleanStream: rawStream,
@@ -38,11 +53,12 @@ const passthrough = (rawStream) => ({
   cleanup: () => {},
 });
 
-export async function applyRnnoiseDenoise(rawStream, existingCtx = null) {
+async function buildChain(rawStream, existingCtx = null, level = 'standard') {
   if (rawStream.getAudioTracks().length === 0) return passthrough(rawStream);
 
   let audioContext;
   const nodes = [];
+  const modelNodes = [];
   try {
     const AudioContextConstructor = window.AudioContext || window.webkitAudioContext;
     if (!existingCtx && !AudioContextConstructor) {
@@ -55,32 +71,52 @@ export async function applyRnnoiseDenoise(rawStream, existingCtx = null) {
     });
     if (audioContext.state === 'suspended') await audioContext.resume();
 
-    const wasmBinary = await getRnnoiseWasmBinary();
-    await audioContext.audioWorklet.addModule(rnnoiseWorkletPath);
-    await audioContext.audioWorklet.addModule(noiseGateWorkletPath);
-
     const sourceNode = audioContext.createMediaStreamSource(rawStream);
     const highpass = audioContext.createBiquadFilter();
     highpass.type = 'highpass';
     highpass.frequency.value = DENOISE_SETTINGS.highpassHz;
     highpass.Q.value = 0.7;
 
-    const rnnoiseNode = new RnnoiseWorkletNode(audioContext, {
-      wasmBinary,
-      maxChannels: 1,
-    });
+    const destinationNode = audioContext.createMediaStreamDestination();
+
+    const modelStages = level === 'standard'
+      ? ['rnnoise']
+      : level === 'strong'
+        ? ['gtcrn']
+        : ['gtcrn', 'rnnoise'];
+
+    await audioContext.audioWorklet.addModule(noiseGateWorkletPath);
     const gateNode = new NoiseGateWorkletNode(audioContext, {
       openThreshold: DENOISE_SETTINGS.gateOpenDb,
       closeThreshold: DENOISE_SETTINGS.gateCloseDb,
       holdMs: DENOISE_SETTINGS.gateHoldMs,
       maxChannels: 1,
     });
-    const destinationNode = audioContext.createMediaStreamDestination();
+    let previousNode = highpass;
+    nodes.push(sourceNode, highpass, gateNode, destinationNode);
 
-    nodes.push(sourceNode, highpass, rnnoiseNode, gateNode, destinationNode);
+    for (const stage of modelStages) {
+      if (stage === 'gtcrn') {
+        const wasmBinary = await getGtcrnWasmBinary();
+        await audioContext.audioWorklet.addModule(gtcrnWorkletPath);
+        const node = new GtcrnWorkletNode(audioContext, { wasmBinary, maxChannels: 1 });
+        modelNodes.push(node);
+        nodes.push(node);
+        previousNode.connect(node);
+        previousNode = node;
+      } else {
+        const wasmBinary = await getRnnoiseWasmBinary();
+        await audioContext.audioWorklet.addModule(rnnoiseWorkletPath);
+        const node = new RnnoiseWorkletNode(audioContext, { wasmBinary, maxChannels: 1 });
+        modelNodes.push(node);
+        nodes.push(node);
+        previousNode.connect(node);
+        previousNode = node;
+      }
+    }
+
     sourceNode.connect(highpass);
-    highpass.connect(rnnoiseNode);
-    rnnoiseNode.connect(gateNode);
+    previousNode.connect(gateNode);
     gateNode.connect(destinationNode);
 
     const cleanStream = destinationNode.stream;
@@ -90,7 +126,7 @@ export async function applyRnnoiseDenoise(rawStream, existingCtx = null) {
     }
     rawStream.getVideoTracks().forEach((videoTrack) => cleanStream.addTrack(videoTrack));
 
-    console.log('[RNNoise] Neural Noise Suppression active 🎙️✨');
+    console.info(`[Denoise] ${level} noise suppression active.`);
 
     const cleanup = () => {
       nodes.forEach((node) => {
@@ -100,7 +136,7 @@ export async function applyRnnoiseDenoise(rawStream, existingCtx = null) {
           console.warn('[Denoise] Could not disconnect audio node:', error);
         }
       });
-      rnnoiseNode.destroy?.();
+      modelNodes.forEach((node) => node.destroy());
       if (!existingCtx && audioContext.state !== 'closed') {
         audioContext.close().catch((error) => {
           console.warn('[Denoise] Could not close audio context:', error);
@@ -108,14 +144,27 @@ export async function applyRnnoiseDenoise(rawStream, existingCtx = null) {
       }
     };
 
-    return { cleanStream, audioContext, rnnoiseNode, isActive: true, cleanup };
+    return {
+      cleanStream,
+      audioContext,
+      rnnoiseNode: modelNodes.find((node) => node instanceof RnnoiseWorkletNode) || null,
+      isActive: true,
+      cleanup,
+    };
   } catch (error) {
-    console.error('[Denoise] init failed, using raw stream:', error);
+    console.error(`[Denoise] ${level} initialization failed:`, error);
     nodes.forEach((node) => {
       try {
         node.disconnect();
       } catch (cleanupError) {
         console.warn('[Denoise] Could not disconnect an audio node:', cleanupError);
+      }
+    });
+    modelNodes.forEach((node) => {
+      try {
+        node.destroy();
+      } catch (cleanupError) {
+        console.warn('[Denoise] Could not destroy a model node:', cleanupError);
       }
     });
     if (!existingCtx && audioContext && audioContext.state !== 'closed') {
@@ -125,4 +174,13 @@ export async function applyRnnoiseDenoise(rawStream, existingCtx = null) {
     }
     return passthrough(rawStream);
   }
+}
+
+export async function applyRnnoiseDenoise(rawStream, existingCtx = null, level = 'standard') {
+  const result = await buildChain(rawStream, existingCtx, level);
+  if (!result.isActive && level !== 'standard') {
+    console.warn(`[Denoise] "${level}" failed, falling back to standard.`);
+    return buildChain(rawStream, existingCtx, 'standard');
+  }
+  return result;
 }

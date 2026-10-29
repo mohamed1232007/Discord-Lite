@@ -30,6 +30,12 @@ const SIDEBAR_ITEMS = [
   { id: 'keybinds',   label: 'Keybinds',         icon: Keyboard, group: 'APP SETTINGS'  },
 ];
 
+const NOISE_LEVEL_OPTIONS = [
+  { id: 'standard', title: 'Standard', badge: 'Default', desc: 'Balanced. Removes typing, fans and background hum while keeping your voice natural.' },
+  { id: 'strong', title: 'Strong', desc: 'A different AI model with a stricter filter. Cleaner in noisy rooms, but may clip quiet speech.' },
+  { id: 'max', title: 'Maximum', desc: 'Runs two AI models back to back. Strongest, but uses more CPU and can sound muffled.' },
+];
+
 export default function SettingsPage({ onClose }) {
   const [activeTab, setActiveTab] = useState('voice');
   const {
@@ -41,6 +47,8 @@ export default function SettingsPage({ onClose }) {
     changeSpeaker,
     isNoiseSuppressionEnabled,
     toggleNoiseSuppression,
+    noiseLevel,
+    changeNoiseLevel,
     updateAudioDevices,
   } = useVoice();
   const { user, signOut } = useAuth();
@@ -208,11 +216,48 @@ export default function SettingsPage({ onClose }) {
                   </button>
                 </div>
 
+                {isNoiseSuppressionEnabled && (
+                  <div className="py-4 border-b border-[#3f4147]" role="radiogroup" aria-label="Noise suppression strength">
+                    <p className="text-white text-sm font-semibold mb-3">Suppression strength</p>
+                    <div className="grid gap-2">
+                      {NOISE_LEVEL_OPTIONS.map((option) => {
+                        const selected = noiseLevel === option.id;
+                        return (
+                          <button
+                            key={option.id}
+                            type="button"
+                            role="radio"
+                            aria-checked={selected}
+                            onClick={() => changeNoiseLevel(option.id)}
+                            className={`text-left p-3 rounded-lg border transition-colors cursor-pointer focus:outline-none focus-visible:ring-2 focus-visible:ring-[#5865f2] ${
+                              selected ? 'border-[#5865f2] bg-[#5865f2]/10' : 'border-[#3f4147] bg-[#2b2d31] hover:bg-[#313338]'
+                            }`}
+                          >
+                            <span className="flex items-center gap-2 text-sm font-semibold text-white">
+                              <span className={`w-3.5 h-3.5 rounded-full border-2 ${selected ? 'border-[#5865f2] bg-[#5865f2]' : 'border-[#80848e]'}`} />
+                              {option.title}
+                              {option.badge && (
+                                <span className="text-[10px] bg-[#23a55a]/20 text-[#23a55a] px-1.5 py-0.5 rounded font-bold tracking-wide">
+                                  {option.badge}
+                                </span>
+                              )}
+                            </span>
+                            <span className="block mt-1 ml-[22px] text-xs text-[#949ba4] leading-relaxed">{option.desc}</span>
+                          </button>
+                        );
+                      })}
+                    </div>
+                    <p className="text-[11px] text-[#80848e] mt-3">
+                      Saved on this computer. Changes apply immediately, even during a call.
+                    </p>
+                  </div>
+                )}
+
                 {/* Info note */}
                 <div className="mt-4 flex items-start gap-2.5 p-3.5 bg-[#2b2d31] rounded-lg border border-[#3f4147]">
                   <Info size={14} className="text-[#5865f2] shrink-0 mt-0.5" />
                   <p className="text-[12px] text-[#949ba4] leading-relaxed">
-                    Noise suppression uses <strong className="text-[#dbdee1]">RNNoise WASM</strong> — a lightweight neural network that runs entirely in your browser.
+                    Noise suppression runs entirely on your device using lightweight neural networks.
                     Each participant filters their own microphone before sending it to the call; browser echo cancellation and noise suppression are also requested.
                     Disable it on low-end devices if you notice high CPU usage.
                   </p>
