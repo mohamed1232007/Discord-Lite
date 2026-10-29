@@ -21,6 +21,29 @@ import { useToast } from '../context/ToastContext';
 import SettingsPage from './SettingsPage';
 
 const BACKEND_URL = import.meta.env.VITE_BACKEND_URL || 'http://localhost:5000/api';
+const UNREAD_STORAGE_KEY = 'dis_lite_unread_messages';
+const UNREAD_CURSOR_STORAGE_KEY = 'dis_lite_unread_cursor';
+
+const readStoredValue = (key, fallback) => {
+  try {
+    const value = window.localStorage.getItem(key);
+    return value ? JSON.parse(value) : fallback;
+  } catch (error) {
+    console.warn('[Messages] Could not restore unread message state:', error);
+    return fallback;
+  }
+};
+
+const readStoredCursor = (key) => {
+  try {
+    const storedCursor = window.localStorage.getItem(key);
+    if (!storedCursor || Number.isNaN(Date.parse(storedCursor))) return null;
+    return new Date(storedCursor).toISOString();
+  } catch (error) {
+    console.warn('[Messages] Could not restore unread message cursor:', error);
+    return null;
+  }
+};
 
 export default function DMSidebar({ selectedChat, onSelectChat, onShowCall, onOpenAuth }) {
   const { user, token, onlineUsers, signOut } = useAuth();
@@ -51,12 +74,29 @@ export default function DMSidebar({ selectedChat, onSelectChat, onShowCall, onOp
   const [showMicMenu, setShowMicMenu] = useState(false);
   const [showSpeakerMenu, setShowSpeakerMenu] = useState(false);
   const [showSettings, setShowSettings] = useState(false);
+  const [unreadState, setUnreadState] = useState(() => ({
+    userId: user?.id || null,
+    counts: user?.id ? readStoredValue(`${UNREAD_STORAGE_KEY}:${user.id}`, {}) : {},
+  }));
+  const unreadCounts = unreadState.userId === user?.id
+    ? unreadState.counts
+    : user?.id
+      ? readStoredValue(`${UNREAD_STORAGE_KEY}:${user.id}`, {})
+      : {};
 
   const settingsMenuRef = useRef(null);
   const micMenuRef = useRef(null);
   const speakerMenuRef = useRef(null);
+  const unreadCountsRef = useRef({});
+  const unreadCursorRef = useRef(null);
+  const unreadPollInFlightRef = useRef(false);
+  const selectedChatIdRef = useRef(selectedChat?.id);
 
   // إغلاق القوائم عند النقر في أي مكان خارجها
+  useEffect(() => {
+    selectedChatIdRef.current = selectedChat?.id;
+  }, [selectedChat?.id]);
+
   useEffect(() => {
     const handleClickOutside = (e) => {
       if (settingsMenuRef.current && !settingsMenuRef.current.contains(e.target)) {
@@ -74,7 +114,7 @@ export default function DMSidebar({ selectedChat, onSelectChat, onShowCall, onOp
   }, []);
 
   useEffect(() => {
-    if (!token) { setFriends([]); return; }
+    if (!token) return undefined;
 
     const fetchFriends = async () => {
       try {
@@ -95,8 +135,91 @@ export default function DMSidebar({ selectedChat, onSelectChat, onShowCall, onOp
     return () => clearInterval(interval);
   }, [token]);
 
+  useEffect(() => {
+    if (!user?.id || !token) {
+      unreadCountsRef.current = {};
+      unreadCursorRef.current = null;
+      return;
+    }
+
+    const countsKey = `${UNREAD_STORAGE_KEY}:${user.id}`;
+    const cursorKey = `${UNREAD_CURSOR_STORAGE_KEY}:${user.id}`;
+    const storedCounts = readStoredValue(countsKey, {});
+    const storedCursor = readStoredCursor(cursorKey);
+    const counts = storedCounts && typeof storedCounts === 'object' && !Array.isArray(storedCounts)
+      ? storedCounts
+      : {};
+
+    unreadCountsRef.current = counts;
+    unreadCursorRef.current = storedCursor || new Date().toISOString();
+  }, [token, user?.id]);
+
+  useEffect(() => {
+    if (!token || !user?.id || !unreadCursorRef.current) return undefined;
+
+    const pollUnreadMessages = async () => {
+      if (document.hidden || unreadPollInFlightRef.current) return;
+      unreadPollInFlightRef.current = true;
+      const after = unreadCursorRef.current;
+      const through = new Date().toISOString();
+
+      try {
+        const query = new URLSearchParams({ after, through });
+        const response = await fetch(`${BACKEND_URL}/messages/inbox/unread?${query}`, {
+          headers: { Authorization: `Bearer ${token}` },
+        });
+        if (!response.ok) throw new Error(`Unread messages request failed (${response.status}).`);
+
+        const data = await response.json();
+        const nextCounts = { ...unreadCountsRef.current };
+        Object.entries(data.unreadBySender || {}).forEach(([senderId, count]) => {
+          if (senderId !== selectedChatIdRef.current) {
+            nextCounts[senderId] = (nextCounts[senderId] || 0) + count;
+          }
+        });
+
+        unreadCursorRef.current = through;
+        unreadCountsRef.current = nextCounts;
+        setUnreadState({ userId: user.id, counts: nextCounts });
+        window.localStorage.setItem(`${UNREAD_STORAGE_KEY}:${user.id}`, JSON.stringify(nextCounts));
+        window.localStorage.setItem(`${UNREAD_CURSOR_STORAGE_KEY}:${user.id}`, through);
+      } catch (error) {
+        console.error('[Messages] Could not update unread counts:', error);
+      } finally {
+        unreadPollInFlightRef.current = false;
+      }
+    };
+
+    pollUnreadMessages();
+    const interval = window.setInterval(pollUnreadMessages, 5000);
+    const handleVisibilityChange = () => {
+      if (!document.hidden) pollUnreadMessages();
+    };
+    document.addEventListener('visibilitychange', handleVisibilityChange);
+    return () => {
+      window.clearInterval(interval);
+      document.removeEventListener('visibilitychange', handleVisibilityChange);
+    };
+  }, [token, user?.id, selectedChat?.id]);
+
+  const openFriendChat = (friend) => {
+    if (user?.id && unreadCountsRef.current[friend.id]) {
+      const nextCounts = { ...unreadCountsRef.current };
+      delete nextCounts[friend.id];
+      unreadCountsRef.current = nextCounts;
+      setUnreadState({ userId: user.id, counts: nextCounts });
+      try {
+        window.localStorage.setItem(`${UNREAD_STORAGE_KEY}:${user.id}`, JSON.stringify(nextCounts));
+      } catch (error) {
+        console.error('[Messages] Could not save unread message state:', error);
+      }
+    }
+    onSelectChat(friend);
+  };
+
   const currentDisplayName = user?.display_name || user?.username || 'Guest';
   const currentUsername    = user?.username || 'guest';
+  const visibleFriends = token ? friends : [];
 
   const callFriendName = activeCall?.friend?.display_name || activeCall?.friend?.username || 'Bedo';
   const activeParticipantCount = callParticipants?.filter((participant) => participant.status === 'active').length || 0;
@@ -174,12 +297,12 @@ export default function DMSidebar({ selectedChat, onSelectChat, onShowCall, onOp
         </div>
 
         <div className="space-y-0.5 pt-1">
-          {friends.length === 0 ? (
+          {visibleFriends.length === 0 ? (
             <div className="text-[11px] text-[#80848e] px-2 py-2">
               No active conversations yet. Add friends to start chatting!
             </div>
           ) : (
-            friends.map((u) => {
+            visibleFriends.map((u) => {
               const isSelected = selectedChat?.id === u.id;
               const isOnline   = onlineUsers.has(u.id);
               const isInCall = callParticipants?.some((participant) => (
@@ -189,7 +312,7 @@ export default function DMSidebar({ selectedChat, onSelectChat, onShowCall, onOp
               return (
                 <div
                   key={u.id}
-                  onClick={() => onSelectChat(u)}
+                  onClick={() => openFriendChat(u)}
                   className={`w-full group flex items-center justify-between px-2 py-1.5 rounded-md cursor-pointer transition ${
                     isSelected ? 'bg-[#18191c] text-white' : 'hover:bg-[#111214] hover:text-[#dbdee1]'
                   }`}
@@ -224,6 +347,14 @@ export default function DMSidebar({ selectedChat, onSelectChat, onShowCall, onOp
                     >
                       <X size={14} />
                     </button>
+                  )}
+                  {!isSelected && unreadCounts[u.id] > 0 && (
+                    <span
+                      className="ml-2 min-w-5 h-5 px-1.5 rounded-full bg-[#f23f43] text-white text-[11px] font-bold leading-5 text-center shrink-0"
+                      aria-label={`${unreadCounts[u.id]} unread messages`}
+                    >
+                      {unreadCounts[u.id] > 99 ? '99+' : unreadCounts[u.id]}
+                    </span>
                   )}
                 </div>
               );
