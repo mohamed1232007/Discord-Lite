@@ -111,6 +111,15 @@ export default function DiscordUpdater({ onFinished }) {
             }
           });
 
+          if ('caches' in window) {
+            try {
+              const cacheNames = await window.caches.keys();
+              await Promise.all(cacheNames.map((cacheName) => window.caches.delete(cacheName)));
+            } catch (error) {
+              console.warn('[Updater] Could not clear outdated web caches:', error);
+            }
+          }
+
           // إعادة تشغيل التطبيق بالنسخة الجديدة فوراً
           clearInterval(progressTimer);
           setProgress(100);

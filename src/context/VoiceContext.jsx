@@ -114,6 +114,7 @@ export const VoiceProvider = ({ children }) => {
   const localStreamRef  = useRef(null);
   const rawMicStreamRef = useRef(null);      // Raw mic stream قبل الفلتر
   const denoiseCleanupRef = useRef(null);    // دالة تنظيف RNNoise
+  const denoiseGenerationRef = useRef(0);
   const noiseSuppressionActiveRef = useRef(false);
   const remoteStreamRef = useRef(null);
   const remoteStreamsRef = useRef([]);
@@ -475,6 +476,7 @@ export const VoiceProvider = ({ children }) => {
     // لو في مكالمة شغالة، نستبدل مسار الصوت فوراً مع تطبيق الـ RNNoise
     if (activeCall && localStreamRef.current) {
       try {
+        denoiseGenerationRef.current += 1;
         if (denoiseCleanupRef.current) {
           denoiseCleanupRef.current();
           denoiseCleanupRef.current = null;
@@ -677,6 +679,95 @@ export const VoiceProvider = ({ children }) => {
   // ─────────────────────────────────────────────────────
   // Helper: Acquire microphone & initial media stream (with RNNoise Neural Denoise)
   // ─────────────────────────────────────────────────────
+  const initializeCallDenoiser = (rawStream) => {
+    const generation = ++denoiseGenerationRef.current;
+
+    window.setTimeout(() => {
+      void (async () => {
+        try {
+          const { cleanStream, cleanup, isActive } = await applyRnnoiseDenoise(
+            rawStream,
+            null,
+            noiseLevelRef.current,
+          );
+          if (generation !== denoiseGenerationRef.current || rawMicStreamRef.current !== rawStream) {
+            cleanup();
+            return;
+          }
+
+          if (!isActive) {
+            await applyNativeNoiseFallback(rawStream);
+            if (generation !== denoiseGenerationRef.current) return;
+            noiseSuppressionActiveRef.current = false;
+            setIsNoiseSuppressionActive(false);
+            toast.warning('AI noise suppression is unavailable; microphone noise reduction remains enabled.');
+            return;
+          }
+
+          const cleanAudioTrack = cleanStream.getAudioTracks()[0];
+          const localStream = localStreamRef.current;
+          if (!cleanAudioTrack || !localStream) {
+            cleanup();
+            throw new Error('The call audio stream is not ready for noise suppression.');
+          }
+
+          const previousAudioTrack = localStream.getAudioTracks()[0];
+          cleanAudioTrack.enabled = previousAudioTrack?.enabled ?? true;
+          try {
+            await replacePeerTrack('audio', cleanAudioTrack);
+          } catch (error) {
+            if (previousAudioTrack) {
+              await replacePeerTrack('audio', previousAudioTrack).catch((rollbackError) => {
+                console.error('[NoiseSuppression] Could not restore the previous audio track:', rollbackError);
+              });
+            }
+            cleanup();
+            throw error;
+          }
+
+          if (previousAudioTrack && previousAudioTrack !== cleanAudioTrack) {
+            localStream.removeTrack(previousAudioTrack);
+          }
+          if (!localStream.getAudioTracks().includes(cleanAudioTrack)) {
+            localStream.addTrack(cleanAudioTrack);
+          }
+
+          denoiseCleanupRef.current?.();
+          denoiseCleanupRef.current = cleanup;
+          noiseSuppressionActiveRef.current = true;
+          setIsNoiseSuppressionActive(true);
+          publishCallState({ noiseSuppressionActive: true });
+
+          const roomId = activeCallRef.current?.roomId;
+          if (roomId) {
+            try {
+              await callApi(token, `/${roomId}/noise`, {
+                method: 'PATCH',
+                body: { enabled: true },
+              });
+            } catch (error) {
+              console.error('[NoiseSuppression] Could not sync active state:', error);
+            }
+            const updatedParticipants = callParticipantsRef.current.map((participant) => (
+              participant.user_id === user?.id
+                ? { ...participant, noise_suppression_enabled: true }
+                : participant
+            ));
+            callParticipantsRef.current = updatedParticipants;
+            setCallParticipants(updatedParticipants);
+          }
+        } catch (error) {
+          if (generation !== denoiseGenerationRef.current || rawMicStreamRef.current !== rawStream) return;
+          console.error('[NoiseSuppression] Could not initialize call audio:', error);
+          await applyNativeNoiseFallback(rawStream);
+          noiseSuppressionActiveRef.current = false;
+          setIsNoiseSuppressionActive(false);
+          toast.warning('AI noise suppression is unavailable; microphone noise reduction remains enabled.');
+        }
+      })();
+    }, 0);
+  };
+
   const acquireMediaStream = async ({ includeVideo = false } = {}) => {
     try {
       const audioConstraints = {
@@ -708,46 +799,21 @@ export const VoiceProvider = ({ children }) => {
       }
       rawMicStreamRef.current = rawStream;
 
-      // تطبيق الـ RNNoise Neural Denoising لإزالة الضوضاء العميقة
-      let processedStream = rawStream;
       if (isNoiseSuppressionEnabled) {
-        try {
-          const { cleanStream, cleanup, isActive } = await applyRnnoiseDenoise(
-            rawStream,
-            null,
-            noiseLevelRef.current,
-          );
-          denoiseCleanupRef.current = cleanup;
-          processedStream = cleanStream;
-          noiseSuppressionActiveRef.current = isActive;
-          setIsNoiseSuppressionActive(isActive);
-          if (!isActive) {
-            await applyNativeNoiseFallback(rawStream);
-            toast.warning('AI noise suppression is unavailable; microphone noise reduction remains enabled.');
-          }
-        } catch (e) {
-          console.warn('[RNNoise] Failed to apply denoiser on mic, using raw:', e);
-          noiseSuppressionActiveRef.current = false;
-          setIsNoiseSuppressionActive(false);
-          await applyNativeNoiseFallback(rawStream);
-          toast.warning('AI noise suppression is unavailable; microphone noise reduction remains enabled.');
-        }
+        noiseSuppressionActiveRef.current = false;
+        setIsNoiseSuppressionActive(false);
+        initializeCallDenoiser(rawStream);
       } else {
         noiseSuppressionActiveRef.current = false;
         setIsNoiseSuppressionActive(false);
       }
 
-      const cameraTrack = rawStream.getVideoTracks()[0];
-      if (cameraTrack && !processedStream.getVideoTracks().some((track) => track.id === cameraTrack.id)) {
-        processedStream.addTrack(cameraTrack);
-      }
-
       // إضافة مسار فيديو خامل مسبقاً لكي يكون Video Sender جاهزاً للشير سكرين
-      const blankTrack = processedStream.getVideoTracks().length ? null : createBlankVideoTrack();
+      const blankTrack = rawStream.getVideoTracks().length ? null : createBlankVideoTrack();
       if (blankTrack) {
-        processedStream.addTrack(blankTrack);
+        rawStream.addTrack(blankTrack);
       }
-      return processedStream;
+      return rawStream;
     } catch (e) {
       console.error('[Media] microphone unavailable:', e);
       throw e;
@@ -1335,6 +1401,7 @@ export const VoiceProvider = ({ children }) => {
   // 5. End Call — الدالة الرئيسية لإنهاء المكالمة
   // ─────────────────────────────────────────────────────
   const endCallCleanup = (updateDb = true) => {
+    denoiseGenerationRef.current += 1;
     const roomId = dbCallIdRef.current;
     const wasIncoming = !!incomingCallRef.current && !activeCallRef.current;
     if (updateDb && roomId && user?.id) {
@@ -1693,6 +1760,7 @@ export const VoiceProvider = ({ children }) => {
     if (!roomId || !rawMicStreamRef.current || !localStreamRef.current) return;
 
     try {
+      denoiseGenerationRef.current += 1;
       denoiseCleanupRef.current?.();
       denoiseCleanupRef.current = null;
 
