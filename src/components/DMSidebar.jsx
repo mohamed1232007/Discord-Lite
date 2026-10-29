@@ -364,7 +364,11 @@ export default function DMSidebar({ selectedChat, onSelectChat, onShowCall, onOp
       </div>
 
       {/* ── Discord Official Voice Connected Bottom Module (تطابق كامل 100%) ── */}
-      <div className="bg-[#070708] border-t border-[#111214] flex flex-col shrink-0">
+      <div className={`relative z-20 -ml-12 w-[calc(100%+3rem)] shrink-0 ${
+        activeCall
+          ? 'mb-2 overflow-hidden rounded-xl border border-[#1e1f22] bg-[#050506]'
+          : 'border-t border-[#111214] bg-[#070708]'
+      }`}>
         
         {/* صندوق الـ Voice Connected */}
         {activeCall && (
@@ -482,8 +486,12 @@ export default function DMSidebar({ selectedChat, onSelectChat, onShowCall, onOp
         )}
 
         {/* ── User Footer Profile ── */}
-        <div className="relative z-30 -ml-16 w-[calc(100%+4rem)] shrink-0 px-2 pb-2">
-          <div className="flex h-16 w-full items-center justify-between rounded-xl border border-[#1e1f22] bg-[#050506] px-3 text-[#dbdee1]">
+        <div className={activeCall ? 'border-t border-[#141517] px-2.5 pb-2' : 'px-2 pb-2'}>
+          <div className={`flex h-16 w-full items-center justify-between px-3 text-[#dbdee1] ${
+            activeCall
+              ? 'bg-[#050506]'
+              : 'rounded-xl border border-[#1e1f22] bg-[#050506]'
+          }`}>
             {user ? (
               <div
                 className="flex items-center gap-3 min-w-0 flex-1"
