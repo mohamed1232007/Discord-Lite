@@ -3,7 +3,7 @@ import Peer from 'peerjs';
 import { useAuth } from './AuthContext';
 import { useToast } from './ToastContext';
 import { supabase } from '../services/supabaseClient';
-import { applyRnnoiseDenoise } from '../services/denoiser';
+import { DenoiseEngine } from '../services/denoiser';
 import { callApi } from '../services/callApi';
 import { useCallRoomSync } from '../hooks/useCallRoomSync';
 
@@ -123,7 +123,7 @@ export const VoiceProvider = ({ children }) => {
   const pendingCallRef  = useRef(new Map()); // مكالمات PeerJS الواردة حسب المشارك
   const localStreamRef  = useRef(null);
   const rawMicStreamRef = useRef(null);      // Raw mic stream قبل الفلتر
-  const denoiseCleanupRef = useRef(null);    // دالة تنظيف RNNoise
+  const denoiseEngineRef = useRef(null);     // محرك إزالة الضوضاء (graph ثابت طول المكالمة)
   const denoiseGenerationRef = useRef(0);
   const noiseSuppressionActiveRef = useRef(false);
   const remoteStreamRef = useRef(null);
@@ -481,11 +481,32 @@ export const VoiceProvider = ({ children }) => {
     }));
   };
 
+  const destroyDenoiseEngine = () => {
+    if (denoiseEngineRef.current) {
+      denoiseEngineRef.current.destroy();
+      denoiseEngineRef.current = null;
+    }
+  };
+
+  const getDenoiseEngine = () => {
+    if (!denoiseEngineRef.current || denoiseEngineRef.current.destroyed) {
+      denoiseEngineRef.current = new DenoiseEngine();
+    }
+    return denoiseEngineRef.current;
+  };
+
+  // تنظيف محرك الصوت عند إغلاق الـ provider (تسجيل خروج/إغلاق التطبيق)
+  useEffect(() => () => {
+    if (denoiseEngineRef.current) {
+      denoiseEngineRef.current.destroy();
+      denoiseEngineRef.current = null;
+    }
+  }, []);
+
   // دالة تغيير المايك
   const changeMicrophone = async (deviceId) => {
-    // لو في مكالمة شغالة، نستبدل مسار الصوت فوراً مع تطبيق الـ RNNoise.
-    // مهم: نبني كل شيء جديد قبل أن نلمس السلسلة الشغالة، وإلا ينقطع الصوت
-    // للمشاركين طول مدة فتح المايك/تحميل موديلات إزالة الضوضاء.
+    // لو في مكالمة شغالة، نغيّر مصدر الصوت في محرك إزالة الضوضاء.
+    // الـ track اللي بيتبعت للطرف التاني بيفضل نفسه، فمفيش انقطاع.
     if (activeCall && localStreamRef.current) {
       const generation = denoiseGenerationRef.current + 1;
       denoiseGenerationRef.current = generation;
@@ -502,63 +523,41 @@ export const VoiceProvider = ({ children }) => {
           },
         });
 
-        let finalAudioTrack;
-        let nextCleanup = null;
-        let nextActive = false;
-
-        if (isNoiseSuppressionEnabled) {
-          const result = await applyRnnoiseDenoise(newRawStream, null, noiseLevelRef.current);
-          // تغيير أحدث بدأ أثناء تجهيز هذا المايك — نتخلّص من النتيجة بدل استخدامها
-          if (denoiseGenerationRef.current !== generation) {
-            result.cleanup();
-            newRawStream.getTracks().forEach((track) => track.stop());
-            return;
-          }
-          nextCleanup = result.cleanup;
-          finalAudioTrack = result.cleanStream.getAudioTracks()[0] || newRawStream.getAudioTracks()[0];
-          nextActive = result.isActive;
-          if (!nextActive) {
-            await applyNativeNoiseFallback(newRawStream);
-            toast.warning('AI noise suppression could not start on the selected microphone.');
-          }
-        } else {
-          finalAudioTrack = newRawStream.getAudioTracks()[0];
-        }
-
-        if (!finalAudioTrack) {
+        if (denoiseGenerationRef.current !== generation) {
           newRawStream.getTracks().forEach((track) => track.stop());
-          throw new Error('The selected microphone did not provide an audio track.');
+          return;
         }
 
-        // احترام حالة الميوت الحالية
-        finalAudioTrack.enabled = !localCallStateRef.current.muted;
+        const engine = denoiseEngineRef.current;
+        if (engine && !engine.destroyed) {
+          await engine.setSource(newRawStream);
+        } else {
+          // مفيش محرك (فشل تشغيله) — نستخدم المايك الجديد مباشرة
+          const newTrack = newRawStream.getAudioTracks()[0];
+          if (!newTrack) throw new Error('The selected microphone did not provide an audio track.');
+          newTrack.enabled = !localCallStateRef.current.muted;
+          await replacePeerTrack('audio', newTrack);
 
-        // 1) استبدال في الـ WebRTC Sender أولاً حتى يستمر الصوت بدون انقطاع
-        await replacePeerTrack('audio', finalAudioTrack);
+          const localStream = localStreamRef.current;
+          const oldTrack = localStream.getAudioTracks()[0];
+          if (oldTrack && oldTrack !== newTrack) localStream.removeTrack(oldTrack);
+          if (!localStream.getAudioTracks().includes(newTrack)) localStream.addTrack(newTrack);
+          if (oldTrack && oldTrack !== newTrack) oldTrack.stop();
 
-        // 2) الآن نبدّل داخل localStream ونغلق السلسلة القديمة
+          noiseSuppressionActiveRef.current = false;
+          setIsNoiseSuppressionActive(false);
+        }
+
         const previousRawStream = rawMicStreamRef.current;
-        const previousCleanup = denoiseCleanupRef.current;
         rawMicStreamRef.current = newRawStream;
-        denoiseCleanupRef.current = nextCleanup;
-
-        const oldTrack = localStreamRef.current.getAudioTracks()[0];
-        if (oldTrack && oldTrack !== finalAudioTrack) localStreamRef.current.removeTrack(oldTrack);
-        if (!localStreamRef.current.getAudioTracks().includes(finalAudioTrack)) {
-          localStreamRef.current.addTrack(finalAudioTrack);
-        }
-        previousCleanup?.();
-        if (oldTrack && oldTrack !== finalAudioTrack) oldTrack.stop();
         previousRawStream?.getTracks().forEach((track) => track.stop());
 
-        noiseSuppressionActiveRef.current = nextActive;
-        setIsNoiseSuppressionActive(nextActive);
-        publishCallState({ noiseSuppressionActive: nextActive });
+        publishCallState({ noiseSuppressionActive: noiseSuppressionActiveRef.current });
 
         if (activeCall.roomId) {
           await callApi(token, `/${activeCall.roomId}/noise`, {
             method: 'PATCH',
-            body: { enabled: nextActive },
+            body: { enabled: noiseSuppressionActiveRef.current },
           });
         }
         setSelectedMic(deviceId);
@@ -742,54 +741,56 @@ export const VoiceProvider = ({ children }) => {
       }
       rawMicStreamRef.current = rawStream;
 
-      let processedStream = rawStream;
-      if (isNoiseSuppressionEnabled) {
-        try {
-          const { cleanStream, cleanup, isActive } = await applyRnnoiseDenoise(
-            rawStream,
-            null,
-            noiseLevelRef.current,
-          );
-          denoiseCleanupRef.current = cleanup;
-          processedStream = cleanStream;
-          noiseSuppressionActiveRef.current = isActive;
-          setIsNoiseSuppressionActive(isActive);
-          if (!isActive) {
-            await applyNativeNoiseFallback(rawStream);
-            toast.warning('AI noise suppression is unavailable; microphone noise reduction remains enabled.');
-          }
-        } catch (error) {
-          console.warn('[NoiseSuppression] Could not process microphone before the call:', error);
-          noiseSuppressionActiveRef.current = false;
-          setIsNoiseSuppressionActive(false);
+      let audioTrack = rawStream.getAudioTracks()[0];
+      let noiseActive = false;
+
+      // بنشغّل المحرك دايماً (حتى لو الفلتر مقفول) عشان مسار الصوت المرسل
+      // يفضل ثابت طول المكالمة، وتبديل المستوى/التشغيل ما يعملش انقطاع.
+      try {
+        const engine = getDenoiseEngine();
+        const result = await engine.start(rawStream, {
+          enabled: isNoiseSuppressionEnabled,
+          level: noiseLevelRef.current,
+        });
+
+        if (result.track) audioTrack = result.track;
+        noiseActive = isNoiseSuppressionEnabled && result.active;
+
+        if (isNoiseSuppressionEnabled && !result.active) {
           await applyNativeNoiseFallback(rawStream);
           toast.warning('AI noise suppression is unavailable; microphone noise reduction remains enabled.');
         }
-      } else {
-        noiseSuppressionActiveRef.current = false;
-        setIsNoiseSuppressionActive(false);
+      } catch (error) {
+        console.warn('[NoiseSuppression] Could not start the denoise engine:', error);
+        destroyDenoiseEngine();
+        audioTrack = rawStream.getAudioTracks()[0];
+        noiseActive = false;
+        if (isNoiseSuppressionEnabled) {
+          await applyNativeNoiseFallback(rawStream);
+          toast.warning('AI noise suppression is unavailable; microphone noise reduction remains enabled.');
+        }
       }
 
-      const cameraTrack = rawStream.getVideoTracks()[0];
-      if (cameraTrack && !processedStream.getVideoTracks().some((track) => track.id === cameraTrack.id)) {
-        processedStream.addTrack(cameraTrack);
-      }
-
-      // إضافة مسار فيديو خامل مسبقاً لكي يكون Video Sender جاهزاً للشير سكرين
-      const blankTrack = processedStream.getVideoTracks().length ? null : createBlankVideoTrack();
-      if (blankTrack) {
-        processedStream.addTrack(blankTrack);
-      }
+      noiseSuppressionActiveRef.current = noiseActive;
+      setIsNoiseSuppressionActive(noiseActive);
 
       // نفصل الـ stream المحلي عن الـ stream الخام (raw) في كائن مستقل.
-      // ده مهم جداً: لما نبدّل مسار الصوت أثناء المكالمة بنشيل/نضيف tracks من
-      // الـ stream المحلي، ولو كان هو نفسه الـ raw stream كنا بنشيل منه
-      // مسار المايك اللي سلسلة إزالة الضوضاء بتقرأ منه => صوت صامت من طرف واحد.
+      // ده مهم جداً: أي إضافة/إزالة tracks أثناء المكالمة ما تأثرش على مصدر
+      // إزالة الضوضاء => ما يحصلش صوت من طرف واحد.
       const outputStream = new MediaStream();
-      [
-        ...processedStream.getAudioTracks(),
-        ...processedStream.getVideoTracks(),
-      ].forEach((track) => outputStream.addTrack(track));
+      if (audioTrack) outputStream.addTrack(audioTrack);
+
+      rawStream.getVideoTracks().forEach((track) => {
+        if (!outputStream.getVideoTracks().some((item) => item.id === track.id)) {
+          outputStream.addTrack(track);
+        }
+      });
+
+      // إضافة مسار فيديو خامل مسبقاً لكي يكون Video Sender جاهزاً للشير سكرين
+      if (outputStream.getVideoTracks().length === 0) {
+        const blankTrack = createBlankVideoTrack();
+        if (blankTrack) outputStream.addTrack(blankTrack);
+      }
 
       return outputStream;
     } catch (e) {
@@ -1245,8 +1246,7 @@ export const VoiceProvider = ({ children }) => {
       }
       rawMicStreamRef.current?.getTracks().forEach((track) => track.stop());
       rawMicStreamRef.current = null;
-      denoiseCleanupRef.current?.();
-      denoiseCleanupRef.current = null;
+      destroyDenoiseEngine();
       toast.error(callErrorMessage(err, 'Could not start the call'));
     }
   };
@@ -1334,8 +1334,7 @@ export const VoiceProvider = ({ children }) => {
       }
       rawMicStreamRef.current?.getTracks().forEach((track) => track.stop());
       rawMicStreamRef.current = null;
-      denoiseCleanupRef.current?.();
-      denoiseCleanupRef.current = null;
+      destroyDenoiseEngine();
     }
   };
 
@@ -1399,10 +1398,7 @@ export const VoiceProvider = ({ children }) => {
     }
 
     try {
-      if (denoiseCleanupRef.current) {
-        denoiseCleanupRef.current();
-        denoiseCleanupRef.current = null;
-      }
+      destroyDenoiseEngine();
       if (remoteDenoiseCleanupRef.current) {
         remoteDenoiseCleanupRef.current();
         remoteDenoiseCleanupRef.current = null;
@@ -1757,70 +1753,68 @@ export const VoiceProvider = ({ children }) => {
     const localStream = localStreamRef.current;
     if (!roomId || !localStream) return;
 
-    // رقم الجيل يمنع تتالي التبديلات السريعة من إبقاء مسار قديم/مغلق مربوطاً بالمكالمة
+    // رقم الجيل يمنع تتالي التبديلات السريعة من إبقاء حالة قديمة هي الظاهرة
     const generation = denoiseGenerationRef.current + 1;
     denoiseGenerationRef.current = generation;
 
     try {
-      const rawStream = await ensureLiveRawMicStream();
+      let active = false;
+      const engine = denoiseEngineRef.current;
 
-      // 1) نجهّز السلسلة الجديدة بالكامل قبل أي لمس للسلسلة الشغالة
-      let finalAudioTrack;
-      let nextCleanup = null;
-      let nextActive = false;
+      if (engine && !engine.destroyed) {
+        // نفس الـ graph ونفس المسار المرسل: تبديل المستوى بيحصل بـ crossfade
+        // جوه الصوت، فمفيش replaceTrack ومفيش انقطاع.
+        if (enabled) await engine.setLevel(level);
+        active = await engine.setEnabled(enabled);
+        if (denoiseGenerationRef.current !== generation) return;
 
-      if (enabled) {
-        const result = await applyRnnoiseDenoise(rawStream, null, level);
+        if (enabled && !active) {
+          await applyNativeNoiseFallback(rawMicStreamRef.current);
+          toast.warning('AI noise suppression could not start; microphone noise reduction remains enabled.');
+        }
+      } else if (enabled) {
+        // مفيش محرك شغال (فشل تشغيله وقت بداية المكالمة) — نبني واحد ونربطه
+        const rawStream = await ensureLiveRawMicStream();
+        if (denoiseGenerationRef.current !== generation) return;
+
+        const created = getDenoiseEngine();
+        const result = await created.start(rawStream, { enabled: true, level });
         if (denoiseGenerationRef.current !== generation) {
-          // تغيير أحدث بدأ أثناء التجهيز — نغلق هذه السلسلة ونتجاهلها
-          result.cleanup();
+          destroyDenoiseEngine();
           return;
         }
-        nextCleanup = result.cleanup;
-        finalAudioTrack = result.cleanStream.getAudioTracks()[0] || rawStream.getAudioTracks()[0];
-        nextActive = result.isActive;
-        if (!nextActive) {
+        if (!result.track) throw new Error('Noise suppression did not produce an audio track.');
+
+        result.track.enabled = !localCallStateRef.current.muted;
+        await replacePeerTrack('audio', result.track);
+
+        // مهم: لو المسار القديم هو نفسه مايك المصدر الخام، ممنوع نوقفه
+        // وإلا المحرك الجديد هيقرأ من مسار ميت => صوت صامت من طرف واحد.
+        const rawTrack = rawStream.getAudioTracks()[0];
+        const oldTrack = localStream.getAudioTracks()[0];
+        if (oldTrack && oldTrack !== result.track) localStream.removeTrack(oldTrack);
+        if (!localStream.getAudioTracks().includes(result.track)) localStream.addTrack(result.track);
+        if (oldTrack && oldTrack !== result.track && oldTrack !== rawTrack) oldTrack.stop();
+
+        active = result.active;
+        if (!active) {
           await applyNativeNoiseFallback(rawStream);
           toast.warning('AI noise suppression could not start; microphone noise reduction remains enabled.');
         }
-      } else {
-        finalAudioTrack = rawStream.getAudioTracks()[0];
       }
 
-      if (!finalAudioTrack) return;
-
-      finalAudioTrack.enabled = !localCallStateRef.current.muted;
-
-      // 2) نبدّل المسار عند الأقران أولاً (replaceTrack) قبل إنهاء القديم
-      await replacePeerTrack('audio', finalAudioTrack);
-
-      // 3) بعد نجاح التبديل نستبدل داخل localStream ونغلق السلسلة القديمة
-      const previousCleanup = denoiseCleanupRef.current;
-      denoiseCleanupRef.current = nextCleanup;
-
-      const rawTrack = rawStream.getAudioTracks()[0];
-      const oldTrack = localStream.getAudioTracks()[0];
-      if (oldTrack && oldTrack !== finalAudioTrack) localStream.removeTrack(oldTrack);
-      if (!localStream.getAudioTracks().includes(finalAudioTrack)) {
-        localStream.addTrack(finalAudioTrack);
-      }
-      previousCleanup?.();
-      // مهم جدًا: ممنوع إيقاف track المايك الخام لأنه مصدر سلسلة إزالة الضوضاء الجديدة.
-      // إيقافه كان بيخلي الصوت الصادر صامت = الطرف التاني مش بيسمع حاجة.
-      if (oldTrack && oldTrack !== finalAudioTrack && oldTrack !== rawTrack) oldTrack.stop();
-
-      noiseSuppressionActiveRef.current = nextActive;
-      setIsNoiseSuppressionActive(nextActive);
-      publishCallState({ noiseSuppressionActive: nextActive });
+      noiseSuppressionActiveRef.current = active;
+      setIsNoiseSuppressionActive(active);
+      publishCallState({ noiseSuppressionActive: active });
 
       await callApi(token, `/${roomId}/noise`, {
         method: 'PATCH',
-        body: { enabled: nextActive },
+        body: { enabled: active },
       });
 
       const updatedParticipants = callParticipantsRef.current.map((participant) => (
         participant.user_id === user.id
-          ? { ...participant, noise_suppression_enabled: nextActive }
+          ? { ...participant, noise_suppression_enabled: active }
           : participant
       ));
       callParticipantsRef.current = updatedParticipants;

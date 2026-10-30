@@ -30,7 +30,7 @@ const SIDEBAR_ITEMS = [
 const NOISE_LEVEL_OPTIONS = [
   { id: 'standard', title: 'Standard', badge: 'Default', desc: 'Balanced. Removes typing, fans and background hum while keeping your voice natural.' },
   { id: 'strong', title: 'Strong', desc: 'A different AI model with a stricter filter. Cleaner in noisy rooms, but may clip quiet speech.' },
-  { id: 'max', title: 'Maximum', desc: 'Runs two AI models back to back. Strongest, but uses more CPU and can sound muffled.' },
+  { id: 'max', title: 'Maximum', desc: 'The strongest AI model with the strictest noise gate. Cuts the most background noise, but quiet speech may be clipped.' },
 ];
 
 export default function SettingsPage({ onClose }) {
