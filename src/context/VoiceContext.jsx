@@ -3,7 +3,7 @@ import Peer from 'peerjs';
 import { useAuth } from './AuthContext';
 import { useToast } from './ToastContext';
 import { supabase } from '../services/supabaseClient';
-import { DenoiseEngine } from '../services/denoiser';
+import { DenoiseEngine, preloadDenoiser } from '../services/denoiser';
 import { callApi } from '../services/callApi';
 import { useCallRoomSync } from '../hooks/useCallRoomSync';
 
@@ -209,6 +209,32 @@ export const VoiceProvider = ({ children }) => {
   useEffect(() => {
     onlineUsersRef.current = onlineUsers;
   }, [onlineUsers]);
+
+  useEffect(() => {
+    if (!user?.id || !isNoiseSuppressionEnabled) return undefined;
+
+    let cancelled = false;
+    let idleHandle;
+    let timeoutHandle;
+    const warmDenoiser = () => {
+      if (cancelled) return;
+      preloadDenoiser(noiseLevelRef.current).catch((error) => {
+        console.warn('[NoiseSuppression] Could not preload the audio model:', error);
+      });
+    };
+
+    if (typeof window.requestIdleCallback === 'function') {
+      idleHandle = window.requestIdleCallback(warmDenoiser, { timeout: 2500 });
+    } else {
+      timeoutHandle = window.setTimeout(warmDenoiser, 1000);
+    }
+
+    return () => {
+      cancelled = true;
+      if (idleHandle !== undefined) window.cancelIdleCallback?.(idleHandle);
+      if (timeoutHandle !== undefined) window.clearTimeout(timeoutHandle);
+    };
+  }, [user?.id, isNoiseSuppressionEnabled, noiseLevel]);
 
   useEffect(() => {
     noiseLevelRef.current = noiseLevel;

@@ -77,6 +77,12 @@ const getGtcrnWasmBinary = () => {
   return gtcrnBinaryPromise;
 };
 
+export const preloadDenoiser = (level = 'standard') => (
+  DENOISE_SETTINGS.levels[level]?.stages.includes('gtcrn')
+    ? getGtcrnWasmBinary()
+    : getRnnoiseWasmBinary()
+);
+
 // الـ ArrayBuffer الواحد ممكن يستهلكه أول Worklet، وتمريره تاني لنفس العقدة
 // أو لعقدة جديدة كان بيخلّي الموديل يفشل بهدوء => صوت صامت.
 // فبنمرّر نسخة جديدة لكل عقدة.
