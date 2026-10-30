@@ -1,5 +1,6 @@
 import {
   ArrowDown,
+  ArrowRight,
   Cpu,
   Download,
   MemoryStick,
@@ -199,31 +200,109 @@ export default function LandingPage({ onOpenApp, onOpenLogin }) {
               </article>
             ))}
             </div>
+            <article className="group relative mt-5 overflow-hidden rounded-3xl border border-[#8792ff]/25 bg-gradient-to-r from-[#5865f2]/20 via-[#252f70]/45 to-[#35c99a]/10 p-6 shadow-[0_24px_70px_rgba(4,8,28,0.28)] transition duration-300 hover:border-[#aeb8ff]/45 sm:p-8 lg:p-10 motion-reduce:transition-none">
+              <div className="pointer-events-none absolute -right-12 -top-20 h-64 w-64 rounded-full bg-[#5865f2]/20 blur-[90px]" aria-hidden="true" />
+              <div className="pointer-events-none absolute -bottom-24 left-1/3 h-48 w-48 rounded-full bg-[#35c99a]/10 blur-[80px]" aria-hidden="true" />
+              <div className="relative flex flex-col gap-7 md:flex-row md:items-center md:justify-between">
+                <div className="flex items-center gap-5 sm:gap-7">
+                  <div className="flex h-16 w-16 shrink-0 items-center justify-center rounded-2xl border border-white/10 bg-white/[0.07] text-[#aeb8ff] shadow-inner sm:h-20 sm:w-20">
+                    <ArrowDown size={38} strokeWidth={2.5} aria-hidden="true" />
+                  </div>
+                  <div>
+                    <p className="text-xs font-bold uppercase tracking-[0.2em] text-[#c5cbff]">A lighter Discord experience</p>
+                    <h3 className="mt-1 text-2xl font-black tracking-tight text-white sm:text-3xl">Up to 95% less resource use*</h3>
+                    <p className="mt-2 max-w-2xl text-sm leading-relaxed text-white/70 sm:text-base">
+                      Uses less CPU and RAM than the standard Discord app, so more of your device stays available for you.
+                    </p>
+                  </div>
+                </div>
+                <div className="flex shrink-0 flex-wrap gap-2 pl-[5.25rem] md:pl-0">
+                  <span className="inline-flex items-center gap-2 rounded-full border border-white/10 bg-black/15 px-3 py-2 text-sm font-semibold text-white/85">
+                    <Cpu size={16} className="text-[#aeb8ff]" aria-hidden="true" />
+                    Less CPU
+                  </span>
+                  <span className="inline-flex items-center gap-2 rounded-full border border-white/10 bg-black/15 px-3 py-2 text-sm font-semibold text-white/85">
+                    <MemoryStick size={16} className="text-[#74e0bd]" aria-hidden="true" />
+                    Less RAM
+                  </span>
+                </div>
+              </div>
+              <p className="relative mt-5 text-xs leading-relaxed text-white/45">
+                *Actual resource usage varies by device, settings, and usage. Compared with the standard Discord app.
+              </p>
+            </article>
           </div>
         </div>
       </section>
 
       <section id="lightweight" className="w-full px-6 py-20 lg:px-14">
-        <div className="mx-auto grid max-w-[1120px] items-center gap-10 rounded-3xl border border-white/10 bg-gradient-to-br from-[#252f70]/80 to-[#111735]/80 p-8 shadow-2xl sm:p-12 lg:grid-cols-[1fr_auto]">
-          <div>
-            <div className="mb-4 inline-flex items-center gap-2 rounded-full border border-[#aeb8ff]/20 bg-[#5865f2]/15 px-3 py-1.5 text-sm font-semibold text-[#c5cbff]">
-              <Sparkles size={16} aria-hidden="true" />
-              Lightweight by design
+        <div className="relative mx-auto max-w-[1360px] overflow-hidden rounded-[2rem] border border-[#8792ff]/20 bg-gradient-to-br from-[#202b66] via-[#171f49] to-[#111735] p-8 shadow-[0_30px_90px_rgba(4,8,28,0.35)] sm:p-12 lg:p-16">
+          <div className="pointer-events-none absolute -right-20 -top-32 h-96 w-96 rounded-full bg-[#5865f2]/20 blur-[100px]" aria-hidden="true" />
+          <div className="pointer-events-none absolute -bottom-40 left-1/4 h-72 w-72 rounded-full bg-[#35c99a]/10 blur-[100px]" aria-hidden="true" />
+          <div className="relative grid items-center gap-12 lg:grid-cols-[1fr_auto]">
+            <div className="max-w-2xl">
+              <div className="mb-5 inline-flex items-center gap-2 rounded-full border border-[#aeb8ff]/20 bg-[#5865f2]/15 px-3 py-1.5 text-sm font-semibold text-[#c5cbff]">
+                <Sparkles size={16} aria-hidden="true" />
+                Your conversations, without the extra load
+              </div>
+              <h2 className="text-4xl font-black leading-tight tracking-tight text-white sm:text-5xl lg:text-6xl">
+                Stay connected.
+                <span className="block text-[#aeb8ff]">Keep your PC light.</span>
+              </h2>
+              <p className="mt-5 max-w-xl text-base leading-relaxed text-white/70 sm:text-lg">
+                Chat, call, and share your screen in a lighter desktop app made for your everyday conversations.
+              </p>
+              <div className="mt-8 flex flex-col gap-3 sm:flex-row">
+                <a
+                  href="https://github.com/mohamed1232007/Discord-Lite/releases/latest"
+                  className="inline-flex items-center justify-center gap-2.5 rounded-full bg-white px-6 py-3.5 text-sm font-bold text-[#23272a] shadow-[0_12px_35px_rgba(255,255,255,0.13)] transition duration-200 hover:-translate-y-0.5 hover:bg-[#f2f3ff] active:scale-[0.98] motion-reduce:transform-none motion-reduce:transition-none"
+                >
+                  <Download size={18} aria-hidden="true" />
+                  Download for Windows
+                </a>
+                <button
+                  type="button"
+                  onClick={handleOpenDiscord}
+                  className="inline-flex items-center justify-center gap-2 rounded-full border border-white/20 bg-white/[0.04] px-6 py-3.5 text-sm font-bold text-white transition duration-200 hover:-translate-y-0.5 hover:bg-white/10 active:scale-[0.98] motion-reduce:transform-none motion-reduce:transition-none"
+                >
+                  Open Discord Lite
+                  <ArrowRight size={17} aria-hidden="true" />
+                </button>
+              </div>
             </div>
-            <h2 className="max-w-xl text-3xl font-black tracking-tight sm:text-4xl">
-              Less RAM and CPU use. More focus on your conversations.
-            </h2>
-            <p className="mt-4 max-w-2xl text-base leading-relaxed text-white/70">
-              Discord Lite is designed to use less memory and processor power during everyday use. Larger screens load only when needed.
-            </p>
+            <div className="relative mx-auto w-full max-w-sm">
+              <div className="absolute inset-0 scale-90 rounded-full bg-[#5865f2]/20 blur-3xl" aria-hidden="true" />
+              <div className="relative rounded-3xl border border-white/10 bg-[#0c122b]/65 p-6 shadow-2xl backdrop-blur-sm sm:p-7">
+                <p className="text-xs font-bold uppercase tracking-[0.2em] text-white/45">Made for the way you chat</p>
+                <div className="mt-6 space-y-4">
+                  {[
+                    { icon: MessageCircle, label: 'Messages', color: 'text-[#aeb8ff]', width: 'w-4/5' },
+                    { icon: Mic, label: 'Voice calls', color: 'text-[#74e0bd]', width: 'w-3/5' },
+                    { icon: MonitorUp, label: 'Screen sharing', color: 'text-[#f0b8ff]', width: 'w-2/3' },
+                  ].map(({ icon: Icon, label, color, width }) => (
+                    <div key={label} className="flex items-center gap-3 rounded-2xl border border-white/[0.07] bg-white/[0.035] p-3.5">
+                      <div className={`flex h-10 w-10 shrink-0 items-center justify-center rounded-xl bg-white/[0.06] ${color}`}>
+                        <Icon size={20} aria-hidden="true" />
+                      </div>
+                      <div className="min-w-0 flex-1">
+                        <p className="text-sm font-semibold text-white/90">{label}</p>
+                        <div className="mt-2 h-1.5 rounded-full bg-white/[0.08]">
+                          <div className={`h-full rounded-full bg-gradient-to-r from-[#5865f2] to-[#74e0bd] ${width}`} />
+                        </div>
+                      </div>
+                    </div>
+                  ))}
+                </div>
+                <div className="mt-5 flex flex-col gap-2 border-t border-white/[0.08] pt-4 text-xs font-medium text-white/50">
+                  <span>One app. All your people.</span>
+                  <span className="inline-flex items-center gap-1.5 text-[#74e0bd]">
+                    <span className="h-1.5 w-1.5 rounded-full bg-[#74e0bd]" />
+                    Ready when you are
+                  </span>
+                </div>
+              </div>
+            </div>
           </div>
-          <a
-            href="#features"
-            className="inline-flex items-center justify-center gap-2 self-center rounded-full border border-white/20 px-5 py-3 font-semibold text-white transition hover:bg-white/10"
-          >
-            Explore features
-            <ArrowDown size={17} aria-hidden="true" />
-          </a>
         </div>
       </section>
 
