@@ -1,3 +1,4 @@
+import { useState } from 'react';
 import { 
   PhoneOff, 
   PhoneCall, 
@@ -11,6 +12,7 @@ export default function CallOverlay({ onCallStarted }) {
     answerCall, 
     endCall 
   } = useVoice();
+  const [isAnswering, setIsAnswering] = useState(false);
 
   // إظهار نافذة الرنين فقط في حال وجود مكالمة واردة
   if (!incomingCall) return null;
@@ -19,8 +21,14 @@ export default function CallOverlay({ onCallStarted }) {
   const callerName = incomingCall.callerName || incomingCall.callerDisplayName || 'Friend';
   const callerInitials = callerName ? callerName.substring(0, 2).toUpperCase() : 'FR';
   const handleAnswer = async () => {
-    await answerCall();
-    onCallStarted?.();
+    if (isAnswering) return;
+    setIsAnswering(true);
+    try {
+      const joined = await answerCall();
+      if (joined) onCallStarted?.();
+    } finally {
+      setIsAnswering(false);
+    }
   };
 
   return (
@@ -55,8 +63,10 @@ export default function CallOverlay({ onCallStarted }) {
           <button
             type="button"
             onClick={handleAnswer}
-            className="relative w-10 h-10 rounded-full bg-[#23a55a] hover:bg-[#1a7e44] text-white flex items-center justify-center shadow-lg transition-transform hover:scale-110 active:scale-95 cursor-pointer"
-            title="Accept Call"
+            disabled={isAnswering}
+            className="relative w-10 h-10 rounded-full bg-[#23a55a] hover:bg-[#1a7e44] text-white flex items-center justify-center shadow-lg transition-transform hover:scale-110 active:scale-95 cursor-pointer disabled:opacity-60 disabled:cursor-wait"
+            title={isAnswering ? 'Joining call...' : 'Accept Call'}
+            aria-label={isAnswering ? 'Joining call' : 'Accept call'}
           >
             <Phone size={18} className="animate-pulse" />
             <span className="absolute -inset-1 rounded-full border border-[#23a55a] animate-ping opacity-50 pointer-events-none" />

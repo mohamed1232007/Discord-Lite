@@ -203,6 +203,7 @@ export const VoiceProvider = ({ children }) => {
   });
   const dataConnectionRef = useRef(new Map());
   const incomingCallRef = useRef(incomingCall);
+  const answeringCallRef = useRef(false);
   const pendingIncomingRoomRef = useRef(null);
   const callParticipantsRef = useRef(callParticipants);
   const localMembershipActiveRef = useRef(false);
@@ -781,96 +782,75 @@ export const VoiceProvider = ({ children }) => {
   };
 
   // ─────────────────────────────────────────────────────
-  // Helper: Discord Ringtone Synthesizer (نغمة رنين ديسكورد الرسمية)
+  // Call sound effects
   // ─────────────────────────────────────────────────────
-  const ringtoneTimerRef = useRef(null);
-  const ringtoneAudioCtx = useRef(null);
+  const soundEffectsRef = useRef(new Map());
 
-  const startDiscordRingtone = () => {
-    stopDiscordRingtone();
-
-    try {
-      const AudioCtx = window.AudioContext || window.webkitAudioContext;
-      const ctx = new AudioCtx();
-      ringtoneAudioCtx.current = ctx;
-
-      // نوتات رنين ديسكورد الكلاسيكي: (D5, F#5, A5, D6, B5, D6, F#6)
-      const playChimeSequence = () => {
-        if (!ringtoneAudioCtx.current || ringtoneAudioCtx.current.state === 'closed') return;
-        const now = ringtoneAudioCtx.current.currentTime;
-
-        const notes = [
-          { freq: 587.33, time: 0.00, dur: 0.12 }, // D5
-          { freq: 739.99, time: 0.12, dur: 0.12 }, // F#5
-          { freq: 880.00, time: 0.24, dur: 0.12 }, // A5
-          { freq: 1174.66, time: 0.36, dur: 0.25 }, // D6
-          { freq: 987.77, time: 0.70, dur: 0.14 }, // B5
-          { freq: 1174.66, time: 0.85, dur: 0.14 }, // D6
-          { freq: 1479.98, time: 1.00, dur: 0.35 }, // F#6
-        ];
-
-        notes.forEach(({ freq, time, dur }) => {
-          const osc = ringtoneAudioCtx.current.createOscillator();
-          const gain = ringtoneAudioCtx.current.createGain();
-
-          osc.type = 'sine';
-          osc.frequency.setValueAtTime(freq, now + time);
-
-          // Bell envelope (هجوم سريع واضمحلال ناعم مثل ماريمبا ديسكورد)
-          gain.gain.setValueAtTime(0, now + time);
-          gain.gain.linearRampToValueAtTime(0.25, now + time + 0.02);
-          gain.gain.exponentialRampToValueAtTime(0.001, now + time + dur);
-
-          osc.connect(gain);
-          gain.connect(ringtoneAudioCtx.current.destination);
-
-          osc.start(now + time);
-          osc.stop(now + time + dur + 0.05);
-        });
-      };
-
-      // تشغيل النغمة أول مرة ثم تكرارها كل 2.4 ثانية تماماً مثل ديسكورد
-      playChimeSequence();
-      ringtoneTimerRef.current = setInterval(playChimeSequence, 2400);
-    } catch (err) {
-      console.warn('[Ringtone] AudioContext error:', err);
+  const getSoundEffect = (name) => {
+    let audio = soundEffectsRef.current.get(name);
+    if (!audio) {
+      const soundUrl = new URL(
+        `${import.meta.env.BASE_URL}sounds/${name}.mp3`,
+        window.location.href,
+      );
+      audio = new Audio(soundUrl);
+      audio.preload = 'auto';
+      soundEffectsRef.current.set(name, audio);
     }
+    return audio;
   };
 
-  const stopDiscordRingtone = () => {
-    if (ringtoneTimerRef.current) {
-      clearInterval(ringtoneTimerRef.current);
-      ringtoneTimerRef.current = null;
-    }
-    if (ringtoneAudioCtx.current) {
-      try {
-        ringtoneAudioCtx.current.close();
-      } catch {
-        // إغلاق AudioContext قد يفشل لو كان مغلقاً بالفعل — لا حاجة لأي إجراء
-      }
-      ringtoneAudioCtx.current = null;
-    }
+  const playSoundEffect = (name) => {
+    const audio = getSoundEffect(name);
+    audio.pause();
+    audio.currentTime = 0;
+    audio.loop = false;
+    audio.play().catch((error) => {
+      console.warn(`[Sound] Could not play ${name}.mp3:`, error);
+    });
+  };
+
+  const startCallRingtone = () => {
+    const audio = getSoundEffect('calling');
+    if (!audio.paused) return;
+    audio.loop = true;
+    audio.currentTime = 0;
+    audio.play().catch((error) => {
+      console.warn('[Sound] Could not play calling.mp3:', error);
+    });
+  };
+
+  const stopCallRingtone = () => {
+    const audio = soundEffectsRef.current.get('calling');
+    if (!audio) return;
+    audio.pause();
+    audio.currentTime = 0;
   };
 
   // مراقبة حالات المكالمة لتشغيل وإيقاف الرنين تلقائياً
   useEffect(() => {
     // 1. لو في مكالمة واردة (Incoming Call Ringing)
     if (incomingCall) {
-      startDiscordRingtone();
+      startCallRingtone();
     }
     // 2. لو المتصل في وضع الاتصال والطرف التاني لسه ماردش (Outgoing Ringing)
     else if (activeCall && callStatus === 'calling') {
-      startDiscordRingtone();
+      startCallRingtone();
     }
     // 3. أول ما المكالمة تتقبل (Connected) أو تنتهي (Idle) -> إيقاف الرنين فوراً
     else {
-      stopDiscordRingtone();
+      stopCallRingtone();
     }
 
-    return () => stopDiscordRingtone();
+    return () => stopCallRingtone();
     // دوال الرنين تعتمد على refs فقط، وإضافتها للاعتماديات تعيد تشغيل النغمة بلا داعٍ
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [incomingCall, activeCall, callStatus]);
+
+  useEffect(() => () => {
+    soundEffectsRef.current.forEach((audio) => audio.pause());
+    soundEffectsRef.current.clear();
+  }, []);
 
   // ─────────────────────────────────────────────────────
   // Helper: Create Blank Video Track (لضمان وجود مسار فيديو جاهز للشير سكرين فوراً)
@@ -1458,7 +1438,8 @@ export const VoiceProvider = ({ children }) => {
   // ─────────────────────────────────────────────────────
   const answerCall = async () => {
     const inc = incomingCallRef.current;
-    if (!inc) return;
+    if (!inc || answeringCallRef.current) return false;
+    answeringCallRef.current = true;
     warnIfTurnIsUnavailable();
     let acceptedMembership = false;
 
@@ -1467,7 +1448,7 @@ export const VoiceProvider = ({ children }) => {
       if (room?.status !== 'active') {
         toast.warning('This call has already ended.');
         endCallCleanup(false);
-        return;
+        return false;
       }
 
       const stream = await acquireMediaStream();
@@ -1513,10 +1494,22 @@ export const VoiceProvider = ({ children }) => {
         pendingVideoCallRef.current = false;
         await toggleCamera();
       }
+      return true;
     } catch (err) {
       console.error('[answerCall] error:', err);
       localMembershipActiveRef.current = false;
-      toast.error(callErrorMessage(err, 'Could not join the call'));
+      const invitationExpired = [
+        'This call invitation is no longer active.',
+        'This call has already ended.',
+      ].includes(err.message);
+      if (invitationExpired) {
+        toast.warning('This call invitation is no longer available.');
+        incomingCallRef.current = null;
+        dbCallIdRef.current = null;
+        setIncomingCall(null);
+      } else {
+        toast.error(callErrorMessage(err, 'Could not join the call'));
+      }
       if (acceptedMembership) {
         try {
           await callApi(token, `/${inc.roomId}/leave`, {
@@ -1538,6 +1531,9 @@ export const VoiceProvider = ({ children }) => {
       rawMicStreamRef.current = null;
       destroyDenoiseEngine();
       disposeScreenAudio();
+      return false;
+    } finally {
+      answeringCallRef.current = false;
     }
   };
 
@@ -1582,7 +1578,9 @@ export const VoiceProvider = ({ children }) => {
   const endCallCleanup = (updateDb = true) => {
     denoiseGenerationRef.current += 1;
     const roomId = dbCallIdRef.current;
+    const hadCall = !!activeCallRef.current || !!incomingCallRef.current;
     const wasIncoming = !!incomingCallRef.current && !activeCallRef.current;
+    if (hadCall) playSoundEffect('disconnect');
     if (updateDb && roomId && user?.id) {
       (async () => {
         const status = wasIncoming ? 'declined' : 'left';
@@ -1687,7 +1685,7 @@ export const VoiceProvider = ({ children }) => {
     setIsNoiseSuppressionActive(false);
 
     // 5. تصفير الـ state فوراً لغلق الشاشة
-    stopDiscordRingtone();
+    stopCallRingtone();
     setActiveCall(null);
     setIncomingCall(null);
     setCallParticipants([]);
@@ -1718,6 +1716,7 @@ export const VoiceProvider = ({ children }) => {
     }
 
     const next = !isMuted;
+    playSoundEffect('mute');
     setIsMuted(next);
     localStreamRef.current?.getAudioTracks().forEach((track) => {
       // صوت مشاركة الشاشة مستقل عن كتم المايك (زي الدسكورد)
@@ -1732,6 +1731,7 @@ export const VoiceProvider = ({ children }) => {
   // ─────────────────────────────────────────────────────
   const toggleDeafen = () => {
     const next = !isDeafened;
+    playSoundEffect('deafen');
     setIsDeafened(next);
     remoteAudioElementsRef.current.forEach((element) => {
       element.muted = next;
