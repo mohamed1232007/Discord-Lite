@@ -18,8 +18,35 @@ import {
 import { useVoice } from '../context/VoiceContext';
 import { useAuth } from '../context/AuthContext';
 import { useToast } from '../context/ToastContext';
+import { formatCallDuration } from '../utils/formatCallDuration';
 
 const BACKEND_URL = import.meta.env.VITE_BACKEND_URL || 'http://localhost:5000/api';
+
+const createParticipantAudioPipeline = (context, track, volume) => {
+  const source = context.createMediaStreamSource(new MediaStream([track]));
+  const gain = context.createGain();
+  const compressor = context.createDynamicsCompressor();
+  const destination = context.createMediaStreamDestination();
+
+  gain.gain.value = volume;
+  compressor.threshold.value = -3;
+  compressor.knee.value = 0;
+  compressor.ratio.value = 12;
+  compressor.attack.value = 0.003;
+  compressor.release.value = 0.15;
+
+  source.connect(gain);
+  gain.connect(compressor);
+  compressor.connect(destination);
+
+  return { track, context, source, gain, compressor, destination };
+};
+
+const disposeParticipantAudioPipeline = (pipeline) => {
+  pipeline.source.disconnect();
+  pipeline.gain.disconnect();
+  pipeline.compressor.disconnect();
+};
 
 export default function CallScreen({ onOpenChat }) {
   const {
@@ -31,6 +58,7 @@ export default function CallScreen({ onOpenChat }) {
     remoteScreenAudioElementsRef,
     participantAudioSettings,
     streamAudioSettings,
+    callConnectedAt,
     setParticipantVolume,
     setParticipantMuted,
     setStreamVolume,
@@ -68,7 +96,6 @@ export default function CallScreen({ onOpenChat }) {
   const { user: currentUser, token } = useAuth();
   const toast = useToast();
   const containerRef = useRef(null);
-  const startTimeRef = useRef(0);
   const [callDuration, setCallDuration] = useState(0);
   const [showMicMenu, setShowMicMenu] = useState(false);
   const [showSpeakerMenu, setShowSpeakerMenu] = useState(false);
@@ -79,6 +106,9 @@ export default function CallScreen({ onOpenChat }) {
   const [friends, setFriends] = useState([]);
   const [selectedInviteIds, setSelectedInviteIds] = useState([]);
   const [loadingFriends, setLoadingFriends] = useState(false);
+  const participantAudioPipelinesRef = useRef(new Map());
+  const participantAudioErrorsRef = useRef(new Set());
+  const participantAudioContextRef = useRef(null);
 
   const micMenuRef = useRef(null);
   const speakerMenuRef = useRef(null);
@@ -132,6 +162,8 @@ export default function CallScreen({ onOpenChat }) {
   }, [callStatus, isRemoteScreenSharing, isRemoteCamera, remoteVideoRef, remoteStreamRef]);
 
   useEffect(() => {
+    const activeParticipantIds = new Set(remoteStreams.map(({ userId }) => userId));
+
     remoteStreams.forEach(({ userId, stream }) => {
       const participantSettings = participantAudioSettings[userId];
       const streamSettings = streamAudioSettings[userId];
@@ -141,22 +173,80 @@ export default function CallScreen({ onOpenChat }) {
           element: remoteAudioElementsRef.current.get(userId),
           track: voiceTrack,
           settings: participantSettings,
+          isVoice: true,
         },
         {
           element: remoteScreenAudioElementsRef.current.get(userId),
           track: screenAudioTrack,
           settings: streamSettings,
+          isVoice: false,
         },
       ];
 
-      audioElements.forEach(({ element, track, settings }) => {
+      audioElements.forEach(({ element, track, settings, isVoice }) => {
         if (!element) return;
-        const audioStream = track ? new MediaStream([track]) : null;
-        if (element.srcObject?.getAudioTracks?.()[0]?.id !== track?.id) {
-          element.srcObject = audioStream;
+
+        if (isVoice) {
+          let pipeline = participantAudioPipelinesRef.current.get(userId);
+          if (!track) {
+            if (pipeline) {
+              disposeParticipantAudioPipeline(pipeline);
+              participantAudioPipelinesRef.current.delete(userId);
+            }
+            element.srcObject = null;
+            return;
+          }
+
+          if (!pipeline || pipeline.track.id !== track.id) {
+            if (pipeline) {
+              disposeParticipantAudioPipeline(pipeline);
+              participantAudioPipelinesRef.current.delete(userId);
+            }
+            try {
+              let audioContext = participantAudioContextRef.current;
+              if (!audioContext) {
+                const AudioContextConstructor = window.AudioContext || window.webkitAudioContext;
+                if (!AudioContextConstructor) {
+                  throw new Error('Web Audio API is not supported.');
+                }
+                audioContext = new AudioContextConstructor({ latencyHint: 'interactive' });
+                participantAudioContextRef.current = audioContext;
+              }
+              pipeline = createParticipantAudioPipeline(audioContext, track, settings?.volume ?? 1);
+              participantAudioPipelinesRef.current.set(userId, pipeline);
+              participantAudioErrorsRef.current.delete(userId);
+              element.srcObject = pipeline.destination.stream;
+            } catch (error) {
+              console.error('[Audio] Could not amplify participant audio:', error);
+              if (!participantAudioErrorsRef.current.has(userId)) {
+                toast.error('Could not apply this user’s volume boost; normal volume is being used.');
+                participantAudioErrorsRef.current.add(userId);
+              }
+              element.srcObject = new MediaStream([track]);
+            }
+          } else {
+            pipeline.gain.gain.setTargetAtTime(
+              settings?.volume ?? 1,
+              pipeline.context.currentTime,
+              0.02,
+            );
+            element.srcObject = pipeline.destination.stream;
+          }
+          pipeline = participantAudioPipelinesRef.current.get(userId);
+          if (pipeline?.context.state === 'suspended') {
+            pipeline.context.resume().catch((error) => {
+              console.warn('[Audio] Could not resume participant audio amplification:', error);
+            });
+          }
+          element.volume = 1;
+        } else {
+          const audioStream = track ? new MediaStream([track]) : null;
+          if (element.srcObject?.getAudioTracks?.()[0]?.id !== track?.id) {
+            element.srcObject = audioStream;
+          }
+          element.volume = settings?.muted ? 0 : settings?.volume ?? 1;
         }
         element.muted = isDeafened || settings?.muted === true;
-        element.volume = element.muted ? 0 : settings?.volume ?? 1;
         if (typeof element.setSinkId === 'function') {
           element.setSinkId(selectedSpeaker === 'default' ? '' : selectedSpeaker)
             .catch((error) => console.warn('[Audio] Could not set output device:', error));
@@ -166,6 +256,14 @@ export default function CallScreen({ onOpenChat }) {
         }
       });
     });
+
+    participantAudioPipelinesRef.current.forEach((pipeline, userId) => {
+      if (!activeParticipantIds.has(userId)) {
+        disposeParticipantAudioPipeline(pipeline);
+        participantAudioPipelinesRef.current.delete(userId);
+        participantAudioErrorsRef.current.delete(userId);
+      }
+    });
   }, [
     remoteStreams,
     isDeafened,
@@ -174,28 +272,31 @@ export default function CallScreen({ onOpenChat }) {
     selectedSpeaker,
     participantAudioSettings,
     streamAudioSettings,
+    toast,
   ]);
+
+  useEffect(() => () => {
+    participantAudioPipelinesRef.current.forEach(disposeParticipantAudioPipeline);
+    participantAudioPipelinesRef.current.clear();
+    const audioContext = participantAudioContextRef.current;
+    participantAudioContextRef.current = null;
+    audioContext?.close().catch((error) => {
+      console.warn('[Audio] Could not close the participant audio context:', error);
+    });
+  }, []);
 
   // عداد مدة المكالمة
   useEffect(() => {
-    if (callStatus !== 'connected') {
+    if (callStatus !== 'connected' || callConnectedAt === null) {
       return;
     }
-    startTimeRef.current = Date.now();
-    const t = setInterval(() => {
-      setCallDuration(Math.floor((Date.now() - startTimeRef.current) / 1000));
-    }, 1000);
-    return () => {
-      clearInterval(t);
-      setCallDuration(0);
+    const updateDuration = () => {
+      setCallDuration(Math.floor((Date.now() - callConnectedAt) / 1000));
     };
-  }, [callStatus]);
-
-  const fmt = (s) => {
-    const m = Math.floor(s / 60);
-    const sec = s % 60;
-    return `${String(m).padStart(2, '0')}:${String(sec).padStart(2, '0')}`;
-  };
+    updateDuration();
+    const timer = setInterval(updateDuration, 1000);
+    return () => clearInterval(timer);
+  }, [callStatus, callConnectedAt]);
 
   const toggleFullscreen = () => {
     if (!document.fullscreenElement) containerRef.current?.requestFullscreen().catch(() => {});
@@ -258,7 +359,9 @@ export default function CallScreen({ onOpenChat }) {
     if (participant.user_id === currentUser?.id) return null;
 
     const settings = participantAudioSettings[participant.user_id] || {};
-    const volume = Number.isFinite(settings.volume) ? settings.volume : 1;
+    const volume = Number.isFinite(settings.volume) ? Math.min(2, Math.max(0, settings.volume)) : 1;
+    const volumePercent = Math.round(volume * 100);
+    const volumeFillPercent = Math.min(100, volumePercent / 2);
     const isMutedForMe = settings.muted === true;
     const isOpen = openParticipantMenuId === participant.user_id;
     const menu = isOpen && participantMenuPosition
@@ -297,7 +400,7 @@ export default function CallScreen({ onOpenChat }) {
               User volume
             </label>
             <span className="rounded-md bg-[#2b2d31] px-2 py-0.5 text-xs font-semibold tabular-nums text-white">
-              {Math.round(volume * 100)}%
+              {volumePercent}%
             </span>
           </div>
           <div className="px-2 pb-2 pt-3">
@@ -305,13 +408,13 @@ export default function CallScreen({ onOpenChat }) {
               id={`participant-volume-${participant.user_id}`}
               type="range"
               min="0"
-              max="100"
+              max="200"
               step="1"
-              value={Math.round(volume * 100)}
+              value={volumePercent}
               onChange={(event) => setParticipantVolume(participant.user_id, Number(event.target.value) / 100)}
               className="participant-volume-slider w-full cursor-pointer"
               style={{
-                background: `linear-gradient(to right, #5865f2 0%, #5865f2 ${volume * 100}%, #3b3d44 ${volume * 100}%, #3b3d44 100%)`,
+                background: `linear-gradient(to right, #5865f2 0%, #5865f2 ${volumeFillPercent}%, #3b3d44 ${volumeFillPercent}%, #3b3d44 100%)`,
               }}
               aria-label={`${participantName} volume`}
             />
@@ -439,7 +542,7 @@ export default function CallScreen({ onOpenChat }) {
             {callParticipants.filter((participant) => participant.status === 'active').length} participants
           </span>
           {isConnected && (
-            <span className="text-xs text-[#23a55a] font-normal ml-2">● {fmt(callDuration)}</span>
+            <span className="text-xs text-[#23a55a] font-normal ml-2">● {formatCallDuration(callDuration)}</span>
           )}
           {isCalling && (
             <span className="text-xs text-[#f0b132] font-normal ml-2 animate-pulse">● Ringing...</span>

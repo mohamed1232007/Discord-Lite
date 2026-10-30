@@ -42,6 +42,13 @@ export const DENOISE_SETTINGS = {
       gateOpenDb: -40,
       gateCloseDb: -48,
     },
+    voiceFocus: {
+      stages: ['rnnoise'],
+      highpassHz: 80,
+      gateOpenDb: -52,
+      gateCloseDb: -58,
+      voiceActivityDetector: true,
+    },
   },
 };
 
@@ -49,6 +56,7 @@ const FALLBACK_LEVELS = {
   max: ['max', 'strong', 'standard'],
   strong: ['strong', 'standard'],
   standard: ['standard'],
+  voiceFocus: ['voiceFocus'],
 };
 
 let rnnoiseBinaryPromise = null;
@@ -82,6 +90,53 @@ export const preloadDenoiser = (level = 'standard') => (
     ? getGtcrnWasmBinary()
     : getRnnoiseWasmBinary()
 );
+
+const createSileroVad = async (monitorStream, audioContext, setSpeechDetected) => {
+  const { MicVAD } = await import('@ricky0123/vad-web');
+  const assetBasePath = new URL(
+    `${import.meta.env.BASE_URL}vad-assets/`,
+    window.location.href,
+  ).toString();
+  const vad = await MicVAD.new({
+    model: 'v5',
+    audioContext,
+    baseAssetPath: assetBasePath,
+    onnxWASMBasePath: assetBasePath,
+    getStream: async () => {
+      const sourceTrack = monitorStream.getAudioTracks()[0];
+      if (!sourceTrack || sourceTrack.readyState !== 'live') {
+        throw new Error('Silero VAD audio input is not available.');
+      }
+      return new MediaStream([sourceTrack.clone()]);
+    },
+    pauseStream: async (stream) => {
+      stream.getTracks().forEach((track) => track.stop());
+    },
+    resumeStream: async (stream) => stream,
+    startOnLoad: false,
+    positiveSpeechThreshold: 0.45,
+    negativeSpeechThreshold: 0.3,
+    redemptionMs: 450,
+    minSpeechMs: 240,
+    onSpeechStart: () => setSpeechDetected(true),
+    onVADMisfire: () => setSpeechDetected(false),
+    onSpeechEnd: () => setSpeechDetected(false),
+    ortConfig: (ort) => {
+      ort.env.wasm.numThreads = 1;
+      ort.env.logLevel = 'error';
+    },
+  });
+
+  try {
+    await vad.start();
+    return vad;
+  } catch (error) {
+    await vad.destroy().catch((destroyError) => {
+      console.warn('[Denoise] Could not dispose a failed Silero VAD:', destroyError);
+    });
+    throw error;
+  }
+};
 
 // الـ ArrayBuffer الواحد ممكن يستهلكه أول Worklet، وتمريره تاني لنفس العقدة
 // أو لعقدة جديدة كان بيخلّي الموديل يفشل بهدوء => صوت صامت.
@@ -264,6 +319,8 @@ export class DenoiseEngine {
 
     const ctx = this.ctx;
     const created = [];
+    let vad = null;
+    let vadMonitor = null;
 
     try {
       const highpass = ctx.createBiquadFilter();
@@ -291,11 +348,48 @@ export class DenoiseEngine {
 
       const gain = ctx.createGain();
       gain.gain.value = 0;
-      gate.connect(gain);
+      if (config.voiceActivityDetector) {
+        const speechGate = ctx.createGain();
+        speechGate.gain.value = 0;
+        created.push(speechGate);
+        gate.connect(speechGate);
+
+        vadMonitor = ctx.createMediaStreamDestination();
+        created.push(vadMonitor);
+        gate.connect(vadMonitor);
+
+        const compressor = ctx.createDynamicsCompressor();
+        compressor.threshold.value = -18;
+        compressor.knee.value = 12;
+        compressor.ratio.value = 4;
+        compressor.attack.value = 0.006;
+        compressor.release.value = 0.14;
+        created.push(compressor);
+        speechGate.connect(compressor);
+        compressor.connect(gain);
+
+        vad = await createSileroVad(vadMonitor.stream, ctx, (speechDetected) => {
+          if (ctx.state === 'closed') return;
+          rampParam(
+            speechGate.gain,
+            speechDetected ? 1 : 0,
+            ctx.currentTime,
+            speechDetected ? 0.02 : 0.12,
+          );
+        });
+      } else {
+        gate.connect(gain);
+      }
       gain.connect(this.mixBus);
 
-      return { level, head: highpass, gain, nodes: created };
+      return { level, head: highpass, gain, nodes: created, vad, vadMonitor };
     } catch (error) {
+      if (vad) {
+        await vad.destroy().catch((destroyError) => {
+          console.warn('[Denoise] Could not dispose a failed noise-suppression chain:', destroyError);
+        });
+      }
+      vadMonitor?.stream.getTracks().forEach((track) => track.stop());
       created.forEach(destroyAudioNode);
       throw error;
     }
@@ -309,6 +403,15 @@ export class DenoiseEngine {
       } catch {
         // العقدة ممكن تكون متوصلة بالفعل
       }
+    }
+    if (chain.vad) {
+      chain.vad.destroy().catch((error) => {
+        console.warn('[Denoise] Could not stop Silero VAD:', error);
+      }).finally(() => {
+        chain.vadMonitor?.stream.getTracks().forEach((track) => track.stop());
+      });
+    } else {
+      chain.vadMonitor?.stream.getTracks().forEach((track) => track.stop());
     }
     chain.nodes.forEach(destroyAudioNode);
     try {
@@ -341,7 +444,12 @@ export class DenoiseEngine {
         console.warn(`[Denoise] "${candidate}" could not start:`, error);
       }
     }
-    if (!next) return this.chain?.level || null;
+    if (!next) {
+      if (target === 'voiceFocus') {
+        throw new Error('Silero VAD could not start for the Voice Focus mode.');
+      }
+      return this.chain?.level || null;
+    }
     if (this.destroyed || !this.ctx) {
       this._disposeChain(next);
       return null;

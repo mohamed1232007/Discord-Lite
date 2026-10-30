@@ -25,8 +25,13 @@ const SELECTED_SPEAKER_STORAGE_KEY = 'dis_lite_selected_speaker';
 const PARTICIPANT_AUDIO_STORAGE_KEY = 'dis_lite_participant_audio';
 const STREAM_AUDIO_STORAGE_KEY = 'dis_lite_stream_audio';
 const NOISE_LEVEL_STORAGE_KEY = 'dis_lite_noise_level';
-const NOISE_LEVELS = ['standard', 'strong', 'max'];
-const NOISE_LEVEL_LABELS = { standard: 'Standard', strong: 'Strong', max: 'Maximum' };
+const NOISE_LEVELS = ['standard', 'strong', 'max', 'voiceFocus'];
+const NOISE_LEVEL_LABELS = {
+  standard: 'Standard',
+  strong: 'Strong',
+  max: 'Maximum',
+  voiceFocus: 'Voice Focus (Silero VAD)',
+};
 
 const getSavedParticipantAudio = () => {
   try {
@@ -40,7 +45,7 @@ const getSavedParticipantAudio = () => {
           userId,
           {
             volume: Number.isFinite(settings.volume)
-              ? Math.min(1, Math.max(0, settings.volume))
+              ? Math.min(2, Math.max(0, settings.volume))
               : 1,
             muted: settings.muted === true,
           },
@@ -136,6 +141,7 @@ export const VoiceProvider = ({ children }) => {
   const [activeCall,      setActiveCall]     = useState(null);
   const [incomingCall,    setIncomingCall]   = useState(null);
   const [callStatus,      setCallStatus]     = useState('idle'); // 'idle' | 'calling' | 'ringing' | 'connected'
+  const [callConnectedAt, setCallConnectedAt] = useState(null);
   const [isMuted,         setIsMuted]        = useState(false);
   const [isDeafened,      setIsDeafened]     = useState(false);
   const [isVideoEnabled,  setIsVideoEnabled] = useState(false);
@@ -185,6 +191,7 @@ export const VoiceProvider = ({ children }) => {
   const screenAudioTrackRef = useRef(null);   // صوت مشاركة الشاشة الحقيقي أثناء الشير
   const dbCallIdRef     = useRef(null);
   const activeCallRef   = useRef(null);      // mirror of activeCall state (للـ closures)
+  const callConnectedAtRef = useRef(null);
   const mediaChannelRef = useRef(null);
   const localCallStateRef = useRef({
     muted: false,
@@ -205,6 +212,15 @@ export const VoiceProvider = ({ children }) => {
   const turnWarningShownRef = useRef(false);
   const OFFLINE_GRACE_MS = 10_000;
   const noiseLevelRef = useRef(noiseLevel);
+
+  const markCallConnected = () => {
+    if (callConnectedAtRef.current === null) {
+      const connectedAt = Date.now();
+      callConnectedAtRef.current = connectedAt;
+      setCallConnectedAt(connectedAt);
+    }
+    setCallStatus('connected');
+  };
 
   useEffect(() => {
     onlineUsersRef.current = onlineUsers;
@@ -632,7 +648,7 @@ export const VoiceProvider = ({ children }) => {
 
   const setParticipantVolume = (participantId, volume) => {
     if (!participantId || !Number.isFinite(volume)) return;
-    const nextVolume = Math.min(1, Math.max(0, volume));
+    const nextVolume = Math.min(2, Math.max(0, volume));
     setParticipantAudioSettings((previous) => ({
       ...previous,
       [participantId]: {
@@ -1105,7 +1121,7 @@ export const VoiceProvider = ({ children }) => {
         toast.error('A call participant has no active microphone audio.');
         return;
       }
-      setCallStatus('connected');
+      markCallConnected();
       await configurePeerAudio(call);
       markScreenAudioSender(call);
 
@@ -1232,7 +1248,7 @@ export const VoiceProvider = ({ children }) => {
     if (participants.some((participant) => (
       participant.user_id !== user?.id && participant.status === 'active'
     ))) {
-      setCallStatus('connected');
+      markCallConnected();
     }
     if (participantsChanged) {
       setActiveCall((previous) => previous?.roomId === roomId
@@ -1405,6 +1421,8 @@ export const VoiceProvider = ({ children }) => {
       callParticipantsRef.current = participants;
       setCallParticipants(participants);
       const callState = { roomId: room.id, callId: room.id, friend, isVideo, participants };
+      callConnectedAtRef.current = null;
+      setCallConnectedAt(null);
       activeCallRef.current = callState;
       setActiveCall(callState);
       setIsMuted(false);
@@ -1470,7 +1488,7 @@ export const VoiceProvider = ({ children }) => {
       setIsMuted(false);
       setIsDeafened(false);
       mutedBeforeDeafenRef.current = false;
-      setCallStatus('connected');
+      markCallConnected();
       const callState = {
         roomId: inc.roomId,
         callId: inc.roomId,
@@ -1647,6 +1665,8 @@ export const VoiceProvider = ({ children }) => {
     remoteStreamsRef.current = [];
     dbCallIdRef.current = null;
     localMembershipActiveRef.current = false;
+    callConnectedAtRef.current = null;
+    setCallConnectedAt(null);
     activeCallRef.current = null;
     incomingCallRef.current = null;
     pendingIncomingRoomRef.current = null;
@@ -2080,6 +2100,7 @@ export const VoiceProvider = ({ children }) => {
       remoteCallStates,
       incomingCall,
       callStatus,
+      callConnectedAt,
       isMuted,
       isDeafened,
       isVideoEnabled,
