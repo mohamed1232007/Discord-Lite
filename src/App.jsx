@@ -1,4 +1,4 @@
-import { lazy, Suspense, useCallback, useState } from 'react';
+import { lazy, Suspense, useCallback, useEffect, useState } from 'react';
 import { AuthProvider, useAuth } from './context/AuthContext';
 import { VoiceProvider, useVoice } from './context/VoiceContext';
 import { ToastProvider } from './context/ToastContext';
@@ -34,14 +34,32 @@ function MainApp() {
   const [requestedView, setRequestedView] = useState(() => {
     const token = localStorage.getItem('dis_lite_token');
     if (token) return 'app';
-    if (isTauriApp) return 'login'; // في تطبيق الويندوز: يفتح شاشة تسجيل الدخول مباشرة بدون صفحة الموقع
-    return localStorage.getItem('dis_lite_view') || 'landing';
+    if (isTauriApp) return 'login';
+    return window.location.pathname === '/login' ? 'login' : 'landing';
   });
 
-  const changeView = useCallback((view) => {
+  const changeView = useCallback((view, { replace = false } = {}) => {
     setRequestedView(view);
-    localStorage.setItem('dis_lite_view', view);
-  }, []);
+
+    if (isTauriApp) return;
+    const path = view === 'login' ? '/login' : '/';
+    if (window.location.pathname !== path) {
+      const updateHistory = replace ? 'replaceState' : 'pushState';
+      window.history[updateHistory]({ view }, '', path);
+    }
+  }, [isTauriApp]);
+
+  useEffect(() => {
+    if (isTauriApp) return undefined;
+
+    const handlePopState = () => {
+      const view = window.location.pathname === '/login' ? 'login' : 'landing';
+      setRequestedView(view);
+    };
+
+    window.addEventListener('popstate', handlePopState);
+    return () => window.removeEventListener('popstate', handlePopState);
+  }, [isTauriApp]);
 
   // الصفحة الفعلية مشتقة من حالة الدخول بدل تعديل الـ state داخل useEffect
   // (يمنع الـ re-render المزدوج ويمنع الدوران في حلقة تحديث)
@@ -104,8 +122,8 @@ function MainApp() {
         />
       ) : currentView === 'login' ? (
         <LoginPage
-          onBackToLanding={() => changeView(isTauriApp ? 'login' : 'landing')}
-          onSuccess={() => changeView('app')}
+          onBackToLanding={isTauriApp ? undefined : () => changeView('landing')}
+          onSuccess={() => changeView('app', { replace: true })}
         />
       ) : (
         <div className="flex h-screen w-screen overflow-hidden bg-[#000000] text-[#dbdee1] font-sans antialiased flex-col">

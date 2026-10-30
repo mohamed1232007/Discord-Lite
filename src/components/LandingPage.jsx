@@ -1,14 +1,17 @@
-import { 
-  Download, 
-  ChevronDown
+import {
+  ArrowDown,
+  Download,
+  MessageCircle,
+  Mic,
+  MonitorUp,
+  Sparkles,
+  Users,
 } from 'lucide-react';
 import { useAuth } from '../context/AuthContext';
-import { useToast } from '../context/ToastContext';
 import heroImg from '../assets/discord-landing-hero.png';
 
 export default function LandingPage({ onOpenApp, onOpenLogin }) {
   const { user } = useAuth();
-  const toast = useToast();
 
   const handleOpenDiscord = () => {
     if (user) {
@@ -18,20 +21,31 @@ export default function LandingPage({ onOpenApp, onOpenLogin }) {
     }
   };
 
-  const navLinks = [
-    { label: 'Download', href: '#' },
-    { label: 'Nitro', href: '#' },
-    { label: 'Discover', hasDropdown: true },
-    { label: 'Safety', hasDropdown: true },
-    { label: 'Quests', hasDropdown: true },
-    { label: 'Support', hasDropdown: true },
-    { label: 'Blog', hasDropdown: true },
-    { label: 'Developers', hasDropdown: true },
-    { label: 'Careers', href: '#' },
+  const features = [
+    {
+      icon: MessageCircle,
+      title: 'Messages that stay in sync',
+      description: 'Chat with friends directly and keep unread messages easy to spot.',
+    },
+    {
+      icon: Users,
+      title: 'Friends and group calls',
+      description: 'Find friends, start a voice call, and invite others into the conversation.',
+    },
+    {
+      icon: Mic,
+      title: 'Clearer voice',
+      description: 'Choose a microphone and adjust on-device noise suppression for your voice.',
+    },
+    {
+      icon: MonitorUp,
+      title: 'Video and screen sharing',
+      description: 'Turn on your camera or share your screen when the conversation needs it.',
+    },
   ];
 
   return (
-    <div className="min-h-screen w-full bg-[#1b2559] text-white flex flex-col font-sans select-none overflow-x-hidden relative bg-gradient-to-b from-[#0c122b] via-[#141c42] to-[#1a2354]">
+    <div className="min-h-screen w-full bg-[#1b2559] text-white flex flex-col font-sans overflow-x-hidden relative bg-gradient-to-b from-[#0c122b] via-[#141c42] to-[#1a2354]">
       
       {/* ── 1. Top Navbar (طابق 100% مع هيدر الصورة) ── */}
       <header className="w-full max-w-[1440px] mx-auto px-6 lg:px-14 h-20 flex items-center justify-between z-50 relative shrink-0">
@@ -46,18 +60,10 @@ export default function LandingPage({ onOpenApp, onOpenLogin }) {
           <span className="font-extrabold text-[22px] tracking-tight text-white font-['Ginto',sans-serif]">Discord Lite</span>
         </div>
 
-        {/* Center Nav Links */}
-        <nav className="hidden lg:flex items-center gap-7 text-[15px] font-semibold text-white/95">
-          {navLinks.map((item) => (
-            <div 
-              key={item.label}
-              className="cursor-pointer hover:underline hover:text-white flex items-center gap-1 transition select-none"
-              onClick={() => toast.info('Under development')}
-            >
-              <span>{item.label}</span>
-              {item.hasDropdown && <ChevronDown size={14} className="text-white/80" />}
-            </div>
-          ))}
+        <nav aria-label="Main navigation" className="hidden lg:flex items-center gap-7 text-[15px] font-semibold text-white/95">
+          <a href="#features" className="hover:underline hover:text-white transition">Features</a>
+          <a href="#lightweight" className="hover:underline hover:text-white transition">Built to stay light</a>
+          <a href="https://github.com/mohamed1232007/Discord-Lite/releases/latest" className="hover:underline hover:text-white transition">Download</a>
         </nav>
 
         {/* Right CTA Button: Open Discord */}
@@ -81,13 +87,13 @@ export default function LandingPage({ onOpenApp, onOpenLogin }) {
           {/* Left Text Column */}
           <div className="lg:col-span-5 flex flex-col gap-6 text-left">
             <h1 className="text-white text-5xl md:text-6xl lg:text-[68px] font-black leading-[0.93] tracking-tighter uppercase drop-shadow-[0_4px_30px_rgba(0,0,0,0.6)]">
-              GROUP CHAT<br />
-              THAT’S ALL<br />
-              FUN & GAMES
+              YOUR CHAT.<br />
+              YOUR PEOPLE.<br />
+              LESS CLUTTER.
             </h1>
 
             <p className="text-white/90 text-base md:text-lg leading-relaxed font-normal max-w-md">
-              Discord Lite is great for playing games and chilling with friends, or even building a worldwide community. Customize your own space to talk, play, and hang out.
+              A lightweight desktop chat for staying close to friends. Message, talk, and share your screen without the extra noise.
             </p>
           </div>
 
@@ -104,20 +110,16 @@ export default function LandingPage({ onOpenApp, onOpenLogin }) {
 
         </div>
 
-        {/* ── 3. Bottom Two Action Buttons (طابق 100% مع الصورة التانية) ── */}
+        {/* ── Main actions ── */}
         <div className="flex flex-wrap items-center justify-center gap-4 pt-10">
-          {/* 1. White Button: Download for Windows */}
           <a
-            href="/Discord-Lite-Setup.exe"
-            download="Discord-Lite-Setup.exe"
-            onClick={() => toast.success('Starting download...')}
+            href="https://github.com/mohamed1232007/Discord-Lite/releases/latest"
             className="px-8 py-4 rounded-full bg-white hover:bg-[#f2f3f5] text-[#23272a] font-bold text-base flex items-center gap-3 shadow-xl transition transform hover:scale-[1.03] active:scale-[0.98] cursor-pointer no-underline select-none"
           >
             <Download size={22} className="stroke-[2.5]" />
             <span>Download for Windows</span>
           </a>
 
-          {/* 2. Blurple Button: Open Discord In your browser */}
           <button
             type="button"
             onClick={handleOpenDiscord}
@@ -126,9 +128,63 @@ export default function LandingPage({ onOpenApp, onOpenLogin }) {
             <span>Open Discord Lite in your browser</span>
           </button>
         </div>
-
       </main>
 
+      <section id="features" className="w-full border-t border-white/10 bg-[#0c122b]/55 px-6 py-20 lg:px-14">
+        <div className="mx-auto max-w-[1280px]">
+          <div className="mx-auto mb-12 max-w-2xl text-center">
+            <p className="mb-3 text-sm font-bold uppercase tracking-[0.2em] text-[#aeb8ff]">Made for conversations</p>
+            <h2 className="text-3xl font-black tracking-tight sm:text-4xl">Everything you need to keep in touch</h2>
+            <p className="mt-4 text-base leading-relaxed text-white/70">
+              The everyday tools for chatting and calling, gathered in one simple desktop app.
+            </p>
+          </div>
+
+          <div className="grid gap-4 sm:grid-cols-2 lg:grid-cols-4">
+            {features.map(({ icon: Icon, title, description }) => (
+              <article
+                key={title}
+                className="rounded-2xl border border-white/10 bg-white/[0.045] p-6 transition hover:border-[#8792ff]/40 hover:bg-white/[0.07]"
+              >
+                <div className="mb-5 flex h-11 w-11 items-center justify-center rounded-xl bg-[#5865f2]/20 text-[#b8c0ff]">
+                  <Icon size={22} aria-hidden="true" />
+                </div>
+                <h3 className="text-lg font-bold text-white">{title}</h3>
+                <p className="mt-2 text-sm leading-relaxed text-white/65">{description}</p>
+              </article>
+            ))}
+          </div>
+        </div>
+      </section>
+
+      <section id="lightweight" className="w-full px-6 py-20 lg:px-14">
+        <div className="mx-auto grid max-w-[1120px] items-center gap-10 rounded-3xl border border-white/10 bg-gradient-to-br from-[#252f70]/80 to-[#111735]/80 p-8 shadow-2xl sm:p-12 lg:grid-cols-[1fr_auto]">
+          <div>
+            <div className="mb-4 inline-flex items-center gap-2 rounded-full border border-[#aeb8ff]/20 bg-[#5865f2]/15 px-3 py-1.5 text-sm font-semibold text-[#c5cbff]">
+              <Sparkles size={16} aria-hidden="true" />
+              Lightweight by design
+            </div>
+            <h2 className="max-w-xl text-3xl font-black tracking-tight sm:text-4xl">
+              Get to your conversations without loading everything at once.
+            </h2>
+            <p className="mt-4 max-w-2xl text-base leading-relaxed text-white/70">
+              Discord Lite loads larger screens, like calls and the updater, only when they’re needed to help keep startup lean.
+              Like any chat app, it still uses memory and processor resources; video and screen sharing need more while active.
+            </p>
+          </div>
+          <a
+            href="#features"
+            className="inline-flex items-center justify-center gap-2 self-center rounded-full border border-white/20 px-5 py-3 font-semibold text-white transition hover:bg-white/10"
+          >
+            Explore features
+            <ArrowDown size={17} aria-hidden="true" />
+          </a>
+        </div>
+      </section>
+
+      <footer className="border-t border-white/10 px-6 py-6 text-center text-sm text-white/45">
+        Discord Lite · Chat, voice, and screen sharing with friends.
+      </footer>
     </div>
   );
 }

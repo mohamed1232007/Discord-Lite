@@ -23,6 +23,7 @@ const DEFAULT_TURN_URLS = [
 const SELECTED_MIC_STORAGE_KEY = 'dis_lite_selected_mic';
 const SELECTED_SPEAKER_STORAGE_KEY = 'dis_lite_selected_speaker';
 const PARTICIPANT_AUDIO_STORAGE_KEY = 'dis_lite_participant_audio';
+const STREAM_AUDIO_STORAGE_KEY = 'dis_lite_stream_audio';
 const NOISE_LEVEL_STORAGE_KEY = 'dis_lite_noise_level';
 const NOISE_LEVELS = ['standard', 'strong', 'max'];
 const NOISE_LEVEL_LABELS = { standard: 'Standard', strong: 'Strong', max: 'Maximum' };
@@ -47,6 +48,30 @@ const getSavedParticipantAudio = () => {
     );
   } catch (error) {
     console.warn('[Audio] Could not restore participant volume settings:', error);
+    return {};
+  }
+};
+
+const getSavedStreamAudio = () => {
+  try {
+    const savedSettings = JSON.parse(window.localStorage.getItem(STREAM_AUDIO_STORAGE_KEY) || '{}');
+    if (!savedSettings || typeof savedSettings !== 'object' || Array.isArray(savedSettings)) return {};
+
+    return Object.fromEntries(
+      Object.entries(savedSettings)
+        .filter(([, settings]) => settings && typeof settings === 'object')
+        .map(([userId, settings]) => [
+          userId,
+          {
+            volume: Number.isFinite(settings.volume)
+              ? Math.min(1, Math.max(0, settings.volume))
+              : 1,
+            muted: settings.muted === true,
+          },
+        ]),
+    );
+  } catch (error) {
+    console.warn('[Audio] Could not restore stream volume settings:', error);
     return {};
   }
 };
@@ -81,6 +106,28 @@ const applyNativeNoiseFallback = async (stream) => {
   }
 };
 
+// مسار صوت صامت مخصص لصوت مشاركة الشاشة.
+// لازم يتبعت من أول المكالمة (Transceiver محجوز) لأن PeerJS ما بيعملش
+// renegotiation بعد الاتصال، فلو ضفنا مسار جديد بعدين الطرف التاني مش هيسمعه.
+const createSilentAudioTrack = () => {
+  const AudioContextConstructor = window.AudioContext || window.webkitAudioContext;
+  if (!AudioContextConstructor) return null;
+
+  try {
+    const ctx = new AudioContextConstructor({ sampleRate: 48000 });
+    const destination = ctx.createMediaStreamDestination();
+    const source = ctx.createConstantSource();
+    source.offset.value = 0;
+    source.connect(destination);
+    source.start();
+    ctx.resume?.().catch(() => {});
+    return { track: destination.stream.getAudioTracks()[0] || null, ctx };
+  } catch (error) {
+    console.warn('[Audio] Could not create the screen-share audio track:', error);
+    return null;
+  }
+};
+
 export const VoiceProvider = ({ children }) => {
   const { user, token, onlineUsers } = useAuth();
   const toast = useToast();
@@ -107,6 +154,7 @@ export const VoiceProvider = ({ children }) => {
   const [selectedMic,     setSelectedMic]    = useState(() => getSavedAudioDevice(SELECTED_MIC_STORAGE_KEY));
   const [selectedSpeaker, setSelectedSpeaker]= useState(() => getSavedAudioDevice(SELECTED_SPEAKER_STORAGE_KEY));
   const [participantAudioSettings, setParticipantAudioSettings] = useState(getSavedParticipantAudio);
+  const [streamAudioSettings, setStreamAudioSettings] = useState(getSavedStreamAudio);
   const [isNoiseSuppressionEnabled, setIsNoiseSuppressionEnabled] = useState(true);
   const [isNoiseSuppressionActive, setIsNoiseSuppressionActive] = useState(false);
   const [noiseLevel, setNoiseLevel] = useState(getSavedNoiseLevel);
@@ -130,7 +178,11 @@ export const VoiceProvider = ({ children }) => {
   const remoteStreamsRef = useRef([]);
   const remoteDenoiseCleanupRef = useRef(null); // تنظيف فلتر الطرف المستقبل
   const remoteAudioElementsRef = useRef(new Map());
+  const remoteScreenAudioElementsRef = useRef(new Map());
   const screenStreamRef = useRef(null);
+  const auxAudioTrackRef = useRef(null);      // مسار صوت ثانٍ (صامت افتراضياً) لصوت مشاركة الشاشة
+  const auxAudioContextRef = useRef(null);
+  const screenAudioTrackRef = useRef(null);   // صوت مشاركة الشاشة الحقيقي أثناء الشير
   const dbCallIdRef     = useRef(null);
   const activeCallRef   = useRef(null);      // mirror of activeCall state (للـ closures)
   const mediaChannelRef = useRef(null);
@@ -202,6 +254,7 @@ export const VoiceProvider = ({ children }) => {
         deafened: !!payload.deafened,
         camera: !!payload.camera,
         screen: !!payload.screen,
+        screenAudio: !!payload.screenAudio,
         noiseSuppressionActive: !!payload.noiseSuppressionActive,
         synced: true,
       };
@@ -345,6 +398,67 @@ export const VoiceProvider = ({ children }) => {
       }
     }));
   };
+  // ── صوت مشاركة الشاشة ─────────────────────────────────
+  // بنستخدم مسار صوت ثانٍ محجوز من أول المكالمة (aux) عشان صوت الشير
+  // يبقى منفصل عن صوت المايك، والطرف التاني يقدر يتحكم فيه لوحده.
+  const getScreenAudioSender = (peerConnection) => {
+    if (!peerConnection) return null;
+    const senders = peerConnection.getSenders();
+    const tagged = senders.find((sender) => sender.__screenAudioSender);
+    if (tagged) return tagged;
+
+    // ترتيب المسارات المتوقع: [0] المايك، [1] صوت الشير، [2] الفيديو
+    const fallback = senders[1];
+    if (fallback?.track?.kind === 'audio') return fallback;
+    return null;
+  };
+
+  const markScreenAudioSender = (call) => {
+    const peerConnection = call?.peerConnection;
+    if (!peerConnection) return;
+    const auxTrack = auxAudioTrackRef.current;
+    const senders = peerConnection.getSenders();
+    const sender = (auxTrack && senders.find((item) => item.track === auxTrack))
+      || (senders[1]?.track?.kind === 'audio' ? senders[1] : null);
+    if (sender) sender.__screenAudioSender = true;
+  };
+
+  const replaceScreenAudioTrack = async (track) => {
+    await Promise.all(getPeerCalls().map(async (call) => {
+      const sender = getScreenAudioSender(call.peerConnection);
+      if (!sender || !track) return;
+      try {
+        await sender.replaceTrack(track);
+      } catch (error) {
+        console.warn('[ScreenShare] Could not switch the screen audio track:', error);
+      }
+    }));
+  };
+
+  const disposeScreenAudio = () => {
+    if (screenAudioTrackRef.current) {
+      try {
+        screenAudioTrackRef.current.onended = null;
+        screenAudioTrackRef.current.stop();
+      } catch {
+        // تجاهل
+      }
+      screenAudioTrackRef.current = null;
+    }
+    if (auxAudioTrackRef.current) {
+      try {
+        auxAudioTrackRef.current.stop();
+      } catch {
+        // تجاهل
+      }
+      auxAudioTrackRef.current = null;
+    }
+    if (auxAudioContextRef.current) {
+      auxAudioContextRef.current.close?.().catch?.(() => {});
+      auxAudioContextRef.current = null;
+    }
+  };
+
   const replaceLocalVideoTrack = async (nextTrack, quality = null) => {
     const stream = localStreamRef.current;
     const oldTracks = stream?.getVideoTracks() || [];
@@ -457,6 +571,38 @@ export const VoiceProvider = ({ children }) => {
       console.error('[Audio] Could not save participant volume settings:', error);
     }
   }, [participantAudioSettings]);
+
+  useEffect(() => {
+    try {
+      window.localStorage.setItem(STREAM_AUDIO_STORAGE_KEY, JSON.stringify(streamAudioSettings));
+    } catch (error) {
+      console.error('[Audio] Could not save stream volume settings:', error);
+    }
+  }, [streamAudioSettings]);
+
+  // مستوى صوت مشاركة الشاشة (زي الدسكورد) — بيتحفظ في localStorage لكل مستخدم.
+  const setStreamVolume = (userId, volume) => {
+    if (!userId || !Number.isFinite(volume)) return;
+    const nextVolume = Math.min(1, Math.max(0, volume));
+    setStreamAudioSettings((previous) => ({
+      ...previous,
+      [userId]: {
+        ...previous[userId],
+        volume: nextVolume,
+      },
+    }));
+  };
+
+  const setStreamMuted = (userId, muted) => {
+    if (!userId) return;
+    setStreamAudioSettings((previous) => ({
+      ...previous,
+      [userId]: {
+        volume: previous[userId]?.volume ?? 1,
+        muted: !!muted,
+      },
+    }));
+  };
 
   const setParticipantVolume = (participantId, volume) => {
     if (!participantId || !Number.isFinite(volume)) return;
@@ -780,6 +926,16 @@ export const VoiceProvider = ({ children }) => {
       const outputStream = new MediaStream();
       if (audioTrack) outputStream.addTrack(audioTrack);
 
+      // مسار صوت ثانٍ (صامت) محجوز لصوت مشاركة الشاشة.
+      // لازم يتضاف هنا قبل إنشاء اتصال PeerJS عشان الـ Transceiver يتحجز.
+      disposeScreenAudio();
+      const silentAudio = createSilentAudioTrack();
+      if (silentAudio?.track) {
+        auxAudioTrackRef.current = silentAudio.track;
+        auxAudioContextRef.current = silentAudio.ctx;
+        outputStream.addTrack(silentAudio.track);
+      }
+
       rawStream.getVideoTracks().forEach((track) => {
         if (!outputStream.getVideoTracks().some((item) => item.id === track.id)) {
           outputStream.addTrack(track);
@@ -818,23 +974,23 @@ export const VoiceProvider = ({ children }) => {
   // Helper: Attach remote stream to <audio>/<video>
   // ─────────────────────────────────────────────────────
   const attachRemote = async (stream, participantId) => {
-    if (!remoteStreamsRef.current.some((entry) => entry.userId === participantId)) {
-      const nextStreams = [...remoteStreamsRef.current, { userId: participantId, stream }];
-      remoteStreamsRef.current = nextStreams;
-      setRemoteStreams(nextStreams);
-    }
+    // بنحدّث المصفوفة دايماً (بمرجع جديد) لأن PeerJS بيطلق حدث "stream"
+    // لكل مسار على حدة، فمسار صوت مشاركة الشاشة ممكن يوصل بعد أول حدث.
+    const existingIndex = remoteStreamsRef.current.findIndex((entry) => entry.userId === participantId);
+    const nextStreams = existingIndex === -1
+      ? [...remoteStreamsRef.current, { userId: participantId, stream }]
+      : remoteStreamsRef.current.map((entry, index) => (
+          index === existingIndex ? { ...entry, stream } : entry
+        ));
+    remoteStreamsRef.current = nextStreams;
+    setRemoteStreams(nextStreams);
+
     if (!remoteStreamRef.current) {
       remoteStreamRef.current = stream;
       if (remoteVideoRef.current) {
         remoteVideoRef.current.srcObject = stream;
         remoteVideoRef.current.play().catch((e) => console.warn('[Video] play blocked:', e));
       }
-    }
-    const audioElement = remoteAudioElementsRef.current.get(participantId);
-    if (audioElement) {
-      audioElement.srcObject = stream;
-      audioElement.muted = false;
-      audioElement.play().catch((e) => console.warn('[Audio] play blocked:', e));
     }
   };
 
@@ -925,6 +1081,7 @@ export const VoiceProvider = ({ children }) => {
       }
       setCallStatus('connected');
       await configurePeerAudio(call);
+      markScreenAudioSender(call);
 
       await attachRemote(remote, participantId);
     });
@@ -1247,6 +1404,7 @@ export const VoiceProvider = ({ children }) => {
       rawMicStreamRef.current?.getTracks().forEach((track) => track.stop());
       rawMicStreamRef.current = null;
       destroyDenoiseEngine();
+      disposeScreenAudio();
       toast.error(callErrorMessage(err, 'Could not start the call'));
     }
   };
@@ -1335,6 +1493,7 @@ export const VoiceProvider = ({ children }) => {
       rawMicStreamRef.current?.getTracks().forEach((track) => track.stop());
       rawMicStreamRef.current = null;
       destroyDenoiseEngine();
+      disposeScreenAudio();
     }
   };
 
@@ -1399,6 +1558,7 @@ export const VoiceProvider = ({ children }) => {
 
     try {
       destroyDenoiseEngine();
+      disposeScreenAudio();
       if (remoteDenoiseCleanupRef.current) {
         remoteDenoiseCleanupRef.current();
         remoteDenoiseCleanupRef.current = null;
@@ -1447,6 +1607,11 @@ export const VoiceProvider = ({ children }) => {
       element.srcObject = null;
     });
     remoteAudioElementsRef.current.clear();
+    remoteScreenAudioElementsRef.current.forEach((element) => {
+      element.pause();
+      element.srcObject = null;
+    });
+    remoteScreenAudioElementsRef.current.clear();
     remoteAudioRef.current = null;
 
     if (localVideoRef.current) localVideoRef.current.srcObject = null;
@@ -1509,6 +1674,8 @@ export const VoiceProvider = ({ children }) => {
     const next = !isMuted;
     setIsMuted(next);
     localStreamRef.current?.getAudioTracks().forEach((track) => {
+      // صوت مشاركة الشاشة مستقل عن كتم المايك (زي الدسكورد)
+      if (track === auxAudioTrackRef.current) return;
       track.enabled = !next;
     });
     publishCallState({ muted: next });
@@ -1535,6 +1702,7 @@ export const VoiceProvider = ({ children }) => {
 
     setIsMuted(muted);
     localStreamRef.current?.getAudioTracks().forEach((track) => {
+      if (track === auxAudioTrackRef.current) return;
       track.enabled = !muted;
     });
     publishCallState({ muted, deafened: next });
@@ -1624,13 +1792,19 @@ export const VoiceProvider = ({ children }) => {
       }
 
       // 3. ثالثاً: إيقاف مسارات الشاشة بأمان (بعد ما المسار الخامل أخد مكانه)
+      await replaceScreenAudioTrack(auxAudioTrackRef.current);
+      if (screenAudioTrackRef.current) {
+        screenAudioTrackRef.current.onended = null;
+        screenAudioTrackRef.current.stop();
+        screenAudioTrackRef.current = null;
+      }
       screenStreamRef.current?.getTracks().forEach(t => t.stop());
       screenStreamRef.current = null;
 
       // 4. تحديث الـ localStream
       if (localVideoRef.current) localVideoRef.current.srcObject = null;
       setIsScreenSharing(false);
-      publishCallState({ screen: false });
+      publishCallState({ screen: false, screenAudio: false });
     } else {
       try {
         const ss = await navigator.mediaDevices.getDisplayMedia({
@@ -1639,7 +1813,8 @@ export const VoiceProvider = ({ children }) => {
             height: { ideal: 720 },
             frameRate: { ideal: 60 },
           },
-          audio: false,
+          audio: true,
+          systemAudio: 'include',
         });
         const sTrack = ss.getVideoTracks()[0];
         if (!sTrack) {
@@ -1647,6 +1822,14 @@ export const VoiceProvider = ({ children }) => {
           throw new Error('Screen capture did not provide a video track.');
         }
         screenStreamRef.current = ss;
+        const screenAudioTrack = ss.getAudioTracks()[0] || null;
+        screenAudioTrackRef.current = screenAudioTrack;
+        if (screenAudioTrack) {
+          await replaceScreenAudioTrack(screenAudioTrack);
+        } else {
+          await replaceScreenAudioTrack(auxAudioTrackRef.current);
+          toast.info('Screen audio is unavailable for the selected window or tab.');
+        }
         sTrack.contentHint = 'detail';
         try {
           await sTrack.applyConstraints({
@@ -1673,7 +1856,7 @@ export const VoiceProvider = ({ children }) => {
         }
 
         setIsScreenSharing(true);
-        publishCallState({ screen: true });
+        publishCallState({ screen: true, screenAudio: !!screenAudioTrack });
 
         setTimeout(() => {
           if (localVideoRef.current && screenStreamRef.current) {
@@ -1692,6 +1875,12 @@ export const VoiceProvider = ({ children }) => {
             restoreError = error;
           }
 
+          await replaceScreenAudioTrack(auxAudioTrackRef.current);
+          if (screenAudioTrackRef.current) {
+            screenAudioTrackRef.current.onended = null;
+            screenAudioTrackRef.current = null;
+          }
+
           // 2. تنظيف الحالة
           screenStreamRef.current?.getTracks().forEach((track) => {
             if (track.kind === 'video') track.onended = null;
@@ -1701,11 +1890,24 @@ export const VoiceProvider = ({ children }) => {
           if (localVideoRef.current) localVideoRef.current.srcObject = null;
 
           setIsScreenSharing(false);
-          publishCallState({ screen: false });
+          publishCallState({ screen: false, screenAudio: false });
           if (restoreError) toast.error('Could not restore the camera after screen sharing stopped.');
         };
+        if (screenAudioTrack) {
+          screenAudioTrack.onended = async () => {
+            await replaceScreenAudioTrack(auxAudioTrackRef.current);
+            screenAudioTrackRef.current = null;
+            publishCallState({ screenAudio: false });
+          };
+        }
       } catch (err) {
         console.error('[toggleScreenShare]', err);
+        await replaceScreenAudioTrack(auxAudioTrackRef.current);
+        if (screenAudioTrackRef.current) {
+          screenAudioTrackRef.current.onended = null;
+          screenAudioTrackRef.current.stop();
+          screenAudioTrackRef.current = null;
+        }
         try {
           await restoreVideoAfterScreenShare();
         } catch (restoreError) {
@@ -1720,7 +1922,7 @@ export const VoiceProvider = ({ children }) => {
           localVideoRef.current.srcObject = cameraEnabledRef.current ? localStreamRef.current : null;
         }
         setIsScreenSharing(false);
-        publishCallState({ screen: false });
+        publishCallState({ screen: false, screenAudio: false });
         toast.error('Could not start screen sharing. Check display-capture permission and try again.');
       }
     }
@@ -1868,8 +2070,11 @@ export const VoiceProvider = ({ children }) => {
       selectedMic,
       selectedSpeaker,
       participantAudioSettings,
+      streamAudioSettings,
       setParticipantVolume,
       setParticipantMuted,
+      setStreamVolume,
+      setStreamMuted,
       changeMicrophone,
       changeSpeaker,
       updateAudioDevices,
@@ -1877,6 +2082,7 @@ export const VoiceProvider = ({ children }) => {
       remoteVideoRef,
       remoteAudioRef,
       remoteAudioElementsRef,
+      remoteScreenAudioElementsRef,
       remoteStreamRef,
       localStreamRef,
       screenStreamRef,

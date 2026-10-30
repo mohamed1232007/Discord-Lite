@@ -28,9 +28,13 @@ export default function CallScreen({ onOpenChat }) {
     remoteCallStates,
     remoteStreams,
     remoteAudioElementsRef,
+    remoteScreenAudioElementsRef,
     participantAudioSettings,
+    streamAudioSettings,
     setParticipantVolume,
     setParticipantMuted,
+    setStreamVolume,
+    setStreamMuted,
     callStatus,      // 'calling' | 'connected'
     isMuted,
     isDeafened,
@@ -68,6 +72,7 @@ export default function CallScreen({ onOpenChat }) {
   const [callDuration, setCallDuration] = useState(0);
   const [showMicMenu, setShowMicMenu] = useState(false);
   const [showSpeakerMenu, setShowSpeakerMenu] = useState(false);
+  const [showStreamAudioMenu, setShowStreamAudioMenu] = useState(false);
   const [showInviteModal, setShowInviteModal] = useState(false);
   const [openParticipantMenuId, setOpenParticipantMenuId] = useState(null);
   const [participantMenuPosition, setParticipantMenuPosition] = useState(null);
@@ -128,19 +133,48 @@ export default function CallScreen({ onOpenChat }) {
 
   useEffect(() => {
     remoteStreams.forEach(({ userId, stream }) => {
-      const element = remoteAudioElementsRef.current.get(userId);
-      if (!element) return;
-      if (element.srcObject !== stream) element.srcObject = stream;
       const participantSettings = participantAudioSettings[userId];
-      element.muted = isDeafened || participantSettings?.muted === true;
-      element.volume = element.muted ? 0 : participantSettings?.volume ?? 1;
-      if (typeof element.setSinkId === 'function') {
-        element.setSinkId(selectedSpeaker === 'default' ? '' : selectedSpeaker)
-          .catch((error) => console.warn('[Audio] Could not set output device:', error));
-      }
-      element.play().catch((error) => console.warn('[Audio] play blocked:', error));
+      const streamSettings = streamAudioSettings[userId];
+      const [voiceTrack, screenAudioTrack] = stream.getAudioTracks();
+      const audioElements = [
+        {
+          element: remoteAudioElementsRef.current.get(userId),
+          track: voiceTrack,
+          settings: participantSettings,
+        },
+        {
+          element: remoteScreenAudioElementsRef.current.get(userId),
+          track: screenAudioTrack,
+          settings: streamSettings,
+        },
+      ];
+
+      audioElements.forEach(({ element, track, settings }) => {
+        if (!element) return;
+        const audioStream = track ? new MediaStream([track]) : null;
+        if (element.srcObject?.getAudioTracks?.()[0]?.id !== track?.id) {
+          element.srcObject = audioStream;
+        }
+        element.muted = isDeafened || settings?.muted === true;
+        element.volume = element.muted ? 0 : settings?.volume ?? 1;
+        if (typeof element.setSinkId === 'function') {
+          element.setSinkId(selectedSpeaker === 'default' ? '' : selectedSpeaker)
+            .catch((error) => console.warn('[Audio] Could not set output device:', error));
+        }
+        if (track) {
+          element.play().catch((error) => console.warn('[Audio] play blocked:', error));
+        }
+      });
     });
-  }, [remoteStreams, isDeafened, remoteAudioElementsRef, selectedSpeaker, participantAudioSettings]);
+  }, [
+    remoteStreams,
+    isDeafened,
+    remoteAudioElementsRef,
+    remoteScreenAudioElementsRef,
+    selectedSpeaker,
+    participantAudioSettings,
+    streamAudioSettings,
+  ]);
 
   // عداد مدة المكالمة
   useEffect(() => {
@@ -180,6 +214,12 @@ export default function CallScreen({ onOpenChat }) {
   const remoteScreenParticipant = activeParticipants.find((participant) => (
     participant.user_id !== currentUser?.id && remoteCallStates[participant.user_id]?.screen
   ));
+  const remoteScreenAudioSettings = remoteScreenParticipant
+    ? streamAudioSettings[remoteScreenParticipant.user_id] || {}
+    : {};
+  const remoteScreenAudioVolume = Number.isFinite(remoteScreenAudioSettings.volume)
+    ? remoteScreenAudioSettings.volume
+    : 1;
   const remoteCameraParticipants = activeParticipants.filter((participant) => (
     participant.user_id !== currentUser?.id && remoteCallStates[participant.user_id]?.camera
   ));
@@ -361,23 +401,32 @@ export default function CallScreen({ onOpenChat }) {
       {/* REMOTE AUDIO */}
       <div className="hidden" aria-hidden="true">
         {remoteStreams.map(({ userId }) => (
-          <audio
-            key={userId}
-            autoPlay
-            playsInline
-            ref={(element) => {
-              if (element) {
-                remoteAudioElementsRef.current.set(userId, element);
-                if (!remoteAudioRef.current) remoteAudioRef.current = element;
-              } else {
-                const removedElement = remoteAudioElementsRef.current.get(userId);
-                remoteAudioElementsRef.current.delete(userId);
-                if (remoteAudioRef.current === removedElement) {
-                  remoteAudioRef.current = remoteAudioElementsRef.current.values().next().value || null;
+          <div key={userId}>
+            <audio
+              autoPlay
+              playsInline
+              ref={(element) => {
+                if (element) {
+                  remoteAudioElementsRef.current.set(userId, element);
+                  if (!remoteAudioRef.current) remoteAudioRef.current = element;
+                } else {
+                  const removedElement = remoteAudioElementsRef.current.get(userId);
+                  remoteAudioElementsRef.current.delete(userId);
+                  if (remoteAudioRef.current === removedElement) {
+                    remoteAudioRef.current = remoteAudioElementsRef.current.values().next().value || null;
+                  }
                 }
-              }
-            }}
-          />
+              }}
+            />
+            <audio
+              autoPlay
+              playsInline
+              ref={(element) => {
+                if (element) remoteScreenAudioElementsRef.current.set(userId, element);
+                else remoteScreenAudioElementsRef.current.delete(userId);
+              }}
+            />
+          </div>
         ))}
       </div>
 
@@ -424,6 +473,7 @@ export default function CallScreen({ onOpenChat }) {
                     getRemoteStream(remoteScreenParticipant?.user_id) || remoteStreamRef.current,
                   )}
                   autoPlay
+                  muted
                   playsInline
                   className="w-full h-full object-contain bg-black"
                 />
@@ -436,6 +486,64 @@ export default function CallScreen({ onOpenChat }) {
                       || friendName} is sharing their screen
                   </span>
                 </div>
+                {remoteScreenParticipant && (
+                  <div className="absolute top-4 right-4 z-20" onClick={(event) => event.stopPropagation()}>
+                    <button
+                      type="button"
+                      onClick={() => setShowStreamAudioMenu((previous) => !previous)}
+                      className={`flex h-10 w-10 items-center justify-center rounded-lg border shadow-lg transition ${
+                        remoteScreenAudioSettings.muted
+                          ? 'border-[#f23f43]/40 bg-[#f23f43]/80 text-white'
+                          : 'border-white/10 bg-black/75 text-white hover:bg-[#2b2d31]'
+                      }`}
+                      title="Control stream audio"
+                      aria-label="Control stream audio"
+                      aria-expanded={showStreamAudioMenu}
+                    >
+                      {remoteScreenAudioSettings.muted ? <VolumeX size={19} /> : <Headphones size={19} />}
+                    </button>
+                    {showStreamAudioMenu && (
+                      <div className="absolute right-0 top-12 w-64 rounded-xl border border-[#353740] bg-[#17181c] p-3 text-[#dbdee1] shadow-[0_12px_40px_rgba(0,0,0,0.65)]">
+                        <div className="mb-3 flex items-center justify-between">
+                          <span className="flex items-center gap-2 text-sm font-semibold text-white">
+                            <Headphones size={16} />
+                            Stream audio
+                          </span>
+                          <span className="rounded-md bg-[#2b2d31] px-2 py-0.5 text-xs font-semibold tabular-nums text-white">
+                            {Math.round(remoteScreenAudioVolume * 100)}%
+                          </span>
+                        </div>
+                        <input
+                          type="range"
+                          min="0"
+                          max="100"
+                          step="1"
+                          value={Math.round(remoteScreenAudioVolume * 100)}
+                          onChange={(event) => setStreamVolume(
+                            remoteScreenParticipant.user_id,
+                            Number(event.target.value) / 100,
+                          )}
+                          className="participant-volume-slider mb-3 w-full cursor-pointer"
+                          style={{
+                            background: `linear-gradient(to right, #5865f2 0%, #5865f2 ${remoteScreenAudioVolume * 100}%, #3b3d44 ${remoteScreenAudioVolume * 100}%, #3b3d44 100%)`,
+                          }}
+                          aria-label="Stream audio volume"
+                        />
+                        <button
+                          type="button"
+                          onClick={() => setStreamMuted(
+                            remoteScreenParticipant.user_id,
+                            !remoteScreenAudioSettings.muted,
+                          )}
+                          className="flex w-full items-center justify-between rounded-md px-2 py-2 text-sm hover:bg-[#272930]"
+                        >
+                          <span>{remoteScreenAudioSettings.muted ? 'Unmute stream' : 'Mute stream'}</span>
+                          {remoteScreenAudioSettings.muted ? <VolumeX size={16} /> : <Headphones size={16} />}
+                        </button>
+                      </div>
+                    )}
+                  </div>
+                )}
               </div>
             ) : (
               <div className="w-full h-full relative flex items-center justify-center">
@@ -508,6 +616,7 @@ export default function CallScreen({ onOpenChat }) {
                         getRemoteStream(remoteCameraParticipants[0].user_id),
                       )}
                       autoPlay
+                      muted
                       playsInline
                       className="w-full h-full object-cover"
                     />
@@ -550,7 +659,7 @@ export default function CallScreen({ onOpenChat }) {
                         isLocal ? localStreamRef.current : remoteVideoStream,
                       )}
                       autoPlay
-                      muted={isLocal}
+                      muted
                       playsInline
                       className="absolute inset-0 w-full h-full object-cover"
                     />
@@ -586,7 +695,9 @@ export default function CallScreen({ onOpenChat }) {
           <>
             {/* عناصر الفيديو متصلة في الخلفية لكن مخفية تماماً بدون التأثير على الواجهة */}
             <div className="hidden" aria-hidden="true">
-              <video ref={remoteVideoRef} autoPlay playsInline />
+              {/* muted إجباري: الصوت بيتم تشغيله من عناصر <audio> المخصصة فقط.
+                  لو الفيديو شغّل الصوت كمان، نفس الصوت بيتسمع مرتين => صدى. */}
+              <video ref={remoteVideoRef} autoPlay muted playsInline />
               <video ref={localVideoRef} autoPlay muted playsInline />
             </div>
 
