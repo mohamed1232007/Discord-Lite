@@ -1,5 +1,80 @@
 @import "tailwindcss";
 
+@keyframes landing-hero-float {
+  0%, 100% {
+    transform: translateY(0);
+  }
+  50% {
+    transform: translateY(-8px);
+  }
+}
+
+@keyframes app-loading-progress {
+  from {
+    width: 0;
+  }
+  to {
+    width: 100%;
+  }
+}
+
+@keyframes screen-loading-progress {
+  from {
+    transform: translateX(-120%);
+  }
+  to {
+    transform: translateX(260%);
+  }
+}
+
+.screen-loading-progress {
+  animation: screen-loading-progress 1.35s ease-in-out infinite;
+}
+
+.app-loading-progress {
+  animation: app-loading-progress 1.8s cubic-bezier(0.22, 1, 0.36, 1) forwards;
+}
+
+.landing-hero-float {
+  animation: landing-hero-float 7s ease-in-out infinite;
+}
+
+.landing-page-scrollbar {
+  scrollbar-width: thin;
+  scrollbar-color: #5865f2 #101735;
+}
+
+.landing-page-scrollbar::-webkit-scrollbar {
+  width: 10px;
+}
+
+.landing-page-scrollbar::-webkit-scrollbar-track {
+  background: #101735;
+}
+
+.landing-page-scrollbar::-webkit-scrollbar-thumb {
+  border: 2px solid #101735;
+  border-radius: 9999px;
+  background: linear-gradient(180deg, #7280ff, #5865f2);
+}
+
+.landing-page-scrollbar::-webkit-scrollbar-thumb:hover {
+  background: #929cff;
+}
+
+@media (prefers-reduced-motion: reduce) {
+  .landing-hero-float,
+  .app-loading-progress,
+  .screen-loading-progress {
+    animation: none;
+  }
+
+  .app-loading-progress,
+  .screen-loading-progress {
+    width: 100%;
+  }
+}
+
 :root {
   color-scheme: dark;
 }

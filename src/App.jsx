@@ -16,8 +16,20 @@ const DiscordUpdater = lazy(() => import('./components/DiscordUpdater'));
 
 function ScreenFallback() {
   return (
-    <div className="flex h-full w-full flex-1 items-center justify-center bg-[#000000] text-[#80848e]">
-      <span className="animate-pulse text-sm">Loading…</span>
+    <div className="flex h-full min-h-screen w-full flex-1 items-center justify-center overflow-hidden bg-[radial-gradient(ellipse_at_top,_#1a2457_0%,_#0c1027_48%,_#080a12_100%)] text-white">
+      <div className="flex w-[min(88vw,320px)] flex-col items-center rounded-3xl border border-white/[0.08] bg-[#111318]/75 px-8 py-9 shadow-[0_24px_100px_rgba(0,0,0,0.4)] backdrop-blur-xl">
+        <div className="relative mb-5 flex h-16 w-16 items-center justify-center rounded-[22px] bg-gradient-to-br from-[#7289ff] to-[#4752c4] shadow-[0_12px_40px_rgba(88,101,242,0.3)]">
+          <div className="absolute -inset-1.5 rounded-[26px] border border-[#7289ff]/20 animate-pulse" />
+          <svg className="h-9 w-9 fill-white" viewBox="0 0 127.14 96.36" aria-hidden="true">
+            <path d="M107.7,8.07A105.15,105.15,0,0,0,81.47,0a72.06,72.06,0,0,0-3.36,6.83A97.68,97.68,0,0,0,49,6.83,72.37,72.37,0,0,0,45.64,0,105.89,105.89,0,0,0,19.39,8.09C2.79,32.65-1.71,56.6.54,80.21h0A105.73,105.73,0,0,0,32.71,96.36,77.7,77.7,0,0,0,39.6,85.25a68.42,68.42,0,0,1-10.85-5.18c.91-.66,1.8-1.34,2.66-2a75.57,75.57,0,0,0,64.32,0c.87.71,1.76,1.39,2.66,2a68.68,68.68,0,0,1-10.87,5.19,77,77,0,0,0,6.89,11.1A105.25,105.25,0,0,0,126.6,80.22h0C129.24,52.84,122.09,29.11,107.7,8.07ZM42.45,65.69C36.18,65.69,31,60,31,53s5-12.74,11.43-12.74S54,45.91,53.89,53,48.84,65.69,42.45,65.69Zm42.24,0C78.41,65.69,73.25,60,73.25,53s5-12.74,11.44-12.74S96.23,45.91,96.12,53,91.08,65.69,84.69,65.69Z" />
+          </svg>
+        </div>
+        <p className="text-sm font-semibold tracking-wide text-white/90">Discord Lite</p>
+        <p className="mt-1 text-xs text-[#949ba4]">Getting things ready…</p>
+        <div className="mt-6 h-1 w-full overflow-hidden rounded-full bg-white/[0.08]" aria-hidden="true">
+          <div className="screen-loading-progress h-full w-2/5 rounded-full bg-gradient-to-r from-[#5865f2] to-[#9b8cff]" />
+        </div>
+      </div>
     </div>
   );
 }
@@ -98,8 +110,8 @@ function MainApp() {
           </div>
           <h1 className="text-xl font-extrabold tracking-tight">Discord Lite</h1>
           <p className="mt-2 text-sm text-[#949ba4]">Getting everything ready for you</p>
-          <div className="mt-7 h-1 w-full overflow-hidden rounded-full bg-white/[0.07]">
-            <div className="h-full w-2/5 rounded-full bg-gradient-to-r from-[#5865f2] to-[#9b8cff] animate-pulse" />
+          <div className="mt-7 h-1 w-full overflow-hidden rounded-full bg-white/[0.07]" aria-hidden="true">
+            <div className="app-loading-progress h-full rounded-full bg-gradient-to-r from-[#5865f2] to-[#9b8cff]" />
           </div>
           <span className="mt-3 text-[11px] font-medium tracking-wide text-[#727781]">CONNECTING TO DISCORD LITE</span>
         </div>
