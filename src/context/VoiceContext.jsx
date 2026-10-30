@@ -780,7 +780,18 @@ export const VoiceProvider = ({ children }) => {
       if (blankTrack) {
         processedStream.addTrack(blankTrack);
       }
-      return processedStream;
+
+      // نفصل الـ stream المحلي عن الـ stream الخام (raw) في كائن مستقل.
+      // ده مهم جداً: لما نبدّل مسار الصوت أثناء المكالمة بنشيل/نضيف tracks من
+      // الـ stream المحلي، ولو كان هو نفسه الـ raw stream كنا بنشيل منه
+      // مسار المايك اللي سلسلة إزالة الضوضاء بتقرأ منه => صوت صامت من طرف واحد.
+      const outputStream = new MediaStream();
+      [
+        ...processedStream.getAudioTracks(),
+        ...processedStream.getVideoTracks(),
+      ].forEach((track) => outputStream.addTrack(track));
+
+      return outputStream;
     } catch (e) {
       console.error('[Media] microphone unavailable:', e);
       throw e;
@@ -1364,6 +1375,8 @@ export const VoiceProvider = ({ children }) => {
   // ─────────────────────────────────────────────────────
   // 5. End Call — الدالة الرئيسية لإنهاء المكالمة
   // ─────────────────────────────────────────────────────
+  // الدالة تُعاد بناؤها كل render عن قصد؛ نحدّث الـ ref أدناه بأحدث نسخة منها.
+  // eslint-disable-next-line react-hooks/exhaustive-deps
   const endCallCleanup = (updateDb = true) => {
     denoiseGenerationRef.current += 1;
     const roomId = dbCallIdRef.current;
@@ -1717,17 +1730,40 @@ export const VoiceProvider = ({ children }) => {
     }
   };
 
+  // يعيد فتح المايك لو المسار الخام اتوقف لأي سبب (مثلاً بعد تبديل قديم)،
+  // حتى لا نبني سلسلة إزالة ضوضاء من مصدر صامت فيصبح الصوت من طرف واحد.
+  const ensureLiveRawMicStream = async () => {
+    const current = rawMicStreamRef.current;
+    if (current?.getAudioTracks().some((track) => track.readyState === 'live')) return current;
+
+    const constraints = {
+      echoCancellation: true,
+      noiseSuppression: false,
+      autoGainControl: false,
+      channelCount: 1,
+      sampleRate: 48000,
+    };
+    if (selectedMic && selectedMic !== 'default') constraints.deviceId = { exact: selectedMic };
+
+    const fresh = await navigator.mediaDevices.getUserMedia({ audio: constraints });
+    // التخلّص من المايك القديم المتوقف حتى لا يفضل مفتوحاً في الخلفية
+    current?.getTracks().forEach((track) => track.stop());
+    rawMicStreamRef.current = fresh;
+    return fresh;
+  };
+
   const applyLiveNoiseSuppression = async (enabled, level) => {
     const roomId = activeCallRef.current?.roomId;
-    const rawStream = rawMicStreamRef.current;
     const localStream = localStreamRef.current;
-    if (!roomId || !rawStream || !localStream) return;
+    if (!roomId || !localStream) return;
 
     // رقم الجيل يمنع تتالي التبديلات السريعة من إبقاء مسار قديم/مغلق مربوطاً بالمكالمة
     const generation = denoiseGenerationRef.current + 1;
     denoiseGenerationRef.current = generation;
 
     try {
+      const rawStream = await ensureLiveRawMicStream();
+
       // 1) نجهّز السلسلة الجديدة بالكامل قبل أي لمس للسلسلة الشغالة
       let finalAudioTrack;
       let nextCleanup = null;
@@ -1762,13 +1798,16 @@ export const VoiceProvider = ({ children }) => {
       const previousCleanup = denoiseCleanupRef.current;
       denoiseCleanupRef.current = nextCleanup;
 
+      const rawTrack = rawStream.getAudioTracks()[0];
       const oldTrack = localStream.getAudioTracks()[0];
       if (oldTrack && oldTrack !== finalAudioTrack) localStream.removeTrack(oldTrack);
       if (!localStream.getAudioTracks().includes(finalAudioTrack)) {
         localStream.addTrack(finalAudioTrack);
       }
       previousCleanup?.();
-      if (oldTrack && oldTrack !== finalAudioTrack) oldTrack.stop();
+      // مهم جدًا: ممنوع إيقاف track المايك الخام لأنه مصدر سلسلة إزالة الضوضاء الجديدة.
+      // إيقافه كان بيخلي الصوت الصادر صامت = الطرف التاني مش بيسمع حاجة.
+      if (oldTrack && oldTrack !== finalAudioTrack && oldTrack !== rawTrack) oldTrack.stop();
 
       noiseSuppressionActiveRef.current = nextActive;
       setIsNoiseSuppressionActive(nextActive);
