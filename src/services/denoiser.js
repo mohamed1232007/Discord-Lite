@@ -47,6 +47,7 @@ export const DENOISE_SETTINGS = {
       highpassHz: 80,
       gateOpenDb: -52,
       gateCloseDb: -58,
+      speechDelayMs: 180,
       voiceActivityDetector: true,
     },
   },
@@ -114,10 +115,11 @@ const createSileroVad = async (monitorStream, audioContext, setSpeechDetected) =
     },
     resumeStream: async (stream) => stream,
     startOnLoad: false,
-    positiveSpeechThreshold: 0.45,
-    negativeSpeechThreshold: 0.3,
-    redemptionMs: 450,
-    minSpeechMs: 240,
+    positiveSpeechThreshold: 0.4,
+    negativeSpeechThreshold: 0.35,
+    redemptionMs: 250,
+    preSpeechPadMs: 320,
+    minSpeechMs: 64,
     onSpeechStart: () => setSpeechDetected(true),
     onVADMisfire: () => setSpeechDetected(false),
     onSpeechEnd: () => setSpeechDetected(false),
@@ -340,7 +342,7 @@ export class DenoiseEngine {
       const gate = new NoiseGateWorkletNode(ctx, {
         openThreshold: config.gateOpenDb,
         closeThreshold: config.gateCloseDb,
-        holdMs: 120,
+        holdMs: config.voiceActivityDetector ? 250 : 120,
         maxChannels: 1,
       });
       created.push(gate);
@@ -349,10 +351,15 @@ export class DenoiseEngine {
       const gain = ctx.createGain();
       gain.gain.value = 0;
       if (config.voiceActivityDetector) {
+        const speechDelay = ctx.createDelay(0.5);
+        speechDelay.delayTime.value = config.speechDelayMs / 1000;
+        created.push(speechDelay);
+        gate.connect(speechDelay);
+
         const speechGate = ctx.createGain();
         speechGate.gain.value = 0;
         created.push(speechGate);
-        gate.connect(speechGate);
+        speechDelay.connect(speechGate);
 
         vadMonitor = ctx.createMediaStreamDestination();
         created.push(vadMonitor);
@@ -374,7 +381,7 @@ export class DenoiseEngine {
             speechGate.gain,
             speechDetected ? 1 : 0,
             ctx.currentTime,
-            speechDetected ? 0.02 : 0.12,
+            0.015,
           );
         });
       } else {
