@@ -48,6 +48,12 @@ export const DENOISE_SETTINGS = {
       gateOpenDb: -52,
       gateCloseDb: -58,
       speechDelayMs: 180,
+      warmthHz: 250,
+      warmthGainDb: 2,
+      warmthQ: 0.8,
+      presenceHz: 2800,
+      presenceGainDb: 2.5,
+      presenceQ: 1,
       highShelfHz: 4000,
       highShelfGainDb: -6,
       residualPeakHz: 6000,
@@ -374,12 +380,28 @@ export class DenoiseEngine {
         created.push(vadMonitor);
         processedTail.connect(vadMonitor);
 
+        const warmth = ctx.createBiquadFilter();
+        warmth.type = 'peaking';
+        warmth.frequency.value = config.warmthHz;
+        warmth.gain.value = config.warmthGainDb;
+        warmth.Q.value = config.warmthQ;
+        created.push(warmth);
+        speechGate.connect(warmth);
+
+        const presence = ctx.createBiquadFilter();
+        presence.type = 'peaking';
+        presence.frequency.value = config.presenceHz;
+        presence.gain.value = config.presenceGainDb;
+        presence.Q.value = config.presenceQ;
+        created.push(presence);
+        warmth.connect(presence);
+
         const compressor = ctx.createDynamicsCompressor();
         compressor.threshold.value = -12;
-        compressor.knee.value = 6;
-        compressor.ratio.value = 2.5;
-        compressor.attack.value = 0.003;
-        compressor.release.value = 0.14;
+        compressor.knee.value = 12;
+        compressor.ratio.value = 3;
+        compressor.attack.value = 0.01;
+        compressor.release.value = 0.1;
         created.push(compressor);
 
         const highShelf = ctx.createBiquadFilter();
@@ -387,7 +409,7 @@ export class DenoiseEngine {
         highShelf.frequency.value = config.highShelfHz;
         highShelf.gain.value = config.highShelfGainDb;
         created.push(highShelf);
-        speechGate.connect(highShelf);
+        presence.connect(highShelf);
 
         const residualPeak = ctx.createBiquadFilter();
         residualPeak.type = 'peaking';
