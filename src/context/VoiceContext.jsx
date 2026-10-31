@@ -1903,9 +1903,9 @@ export const VoiceProvider = ({ children }) => {
       try {
         const ss = await navigator.mediaDevices.getDisplayMedia({
           video: {
-            width: { ideal: 1280 },
-            height: { ideal: 720 },
-            frameRate: { ideal: 60 },
+            width: { ideal: 1920 },
+            height: { ideal: 1080 },
+            frameRate: { ideal: 30 },
           },
           audio: true,
           systemAudio: 'include',
@@ -1938,9 +1938,9 @@ export const VoiceProvider = ({ children }) => {
         sTrack.contentHint = 'detail';
         try {
           await sTrack.applyConstraints({
-            width: { ideal: 1280, max: 1280 },
-            height: { ideal: 720, max: 720 },
-            frameRate: { ideal: 60, max: 60 },
+            width: { ideal: 1920 },
+            height: { ideal: 1080 },
+            frameRate: { ideal: 30 },
           });
         } catch (error) {
           console.warn('[ScreenShare] Browser could not apply preferred capture constraints:', error);
@@ -1948,9 +1948,17 @@ export const VoiceProvider = ({ children }) => {
         console.info('[ScreenShare] Captured display settings:', sTrack.getSettings());
 
         // 1. استبدال المسار فورياً في الـ WebRTC Video Sender ليظهر عند الطرف الآخر فوراً!
+        const screenSharePeerCount = Math.max(
+          1,
+          getPeerCalls().filter((call) => call.peerConnection).length,
+        );
+        const screenShareBitrate = Math.max(
+          1_500_000,
+          Math.floor(6_000_000 / screenSharePeerCount),
+        );
         await replacePeerTrack('video', sTrack, {
-          maxBitrate: 2_000_000,
-          maxFramerate: 60,
+          maxBitrate: screenShareBitrate,
+          maxFramerate: 30,
           degradationPreference: 'maintain-resolution',
         });
 
