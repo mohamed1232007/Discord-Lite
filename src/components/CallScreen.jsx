@@ -326,6 +326,8 @@ export default function CallScreen({ onOpenChat }) {
   const remoteScreenAudioSettings = remoteScreenParticipant
     ? streamAudioSettings[remoteScreenParticipant.user_id] || {}
     : {};
+  const remoteScreenAudioAvailable = !!remoteScreenParticipant
+    && remoteCallStates[remoteScreenParticipant.user_id]?.screenAudio === true;
   const remoteScreenAudioVolume = Number.isFinite(remoteScreenAudioSettings.volume)
     ? remoteScreenAudioSettings.volume
     : 1;
@@ -601,14 +603,15 @@ export default function CallScreen({ onOpenChat }) {
                   <div className="absolute top-4 right-4 z-20" onClick={(event) => event.stopPropagation()}>
                     <button
                       type="button"
+                      disabled={!remoteScreenAudioAvailable}
                       onClick={() => setShowStreamAudioMenu((previous) => !previous)}
-                      className={`flex h-10 w-10 items-center justify-center rounded-lg border shadow-lg transition ${
+                      className={`flex h-10 w-10 items-center justify-center rounded-lg border shadow-lg transition disabled:cursor-not-allowed disabled:opacity-50 ${
                         remoteScreenAudioSettings.muted
                           ? 'border-[#f23f43]/40 bg-[#f23f43]/80 text-white'
                           : 'border-white/10 bg-black/75 text-white hover:bg-[#2b2d31]'
                       }`}
-                      title="Control stream audio"
-                      aria-label="Control stream audio"
+                      title={remoteScreenAudioAvailable ? 'Control stream audio' : 'Stream audio is unavailable'}
+                      aria-label={remoteScreenAudioAvailable ? 'Control stream audio' : 'Stream audio is unavailable'}
                       aria-expanded={showStreamAudioMenu}
                     >
                       {remoteScreenAudioSettings.muted ? <VolumeX size={19} /> : <Headphones size={19} />}

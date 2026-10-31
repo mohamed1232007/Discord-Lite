@@ -460,10 +460,8 @@ export const VoiceProvider = ({ children }) => {
     const tagged = senders.find((sender) => sender.__screenAudioSender);
     if (tagged) return tagged;
 
-    // ترتيب المسارات المتوقع: [0] المايك، [1] صوت الشير، [2] الفيديو
-    const fallback = senders[1];
-    if (fallback?.track?.kind === 'audio') return fallback;
-    return null;
+    // ترتيب الفيديو والصوت غير مضمون؛ نختار ثاني مرسل صوت بعد المايك.
+    return senders.filter((sender) => sender.track?.kind === 'audio')[1] || null;
   };
 
   const markScreenAudioSender = (call) => {
@@ -472,20 +470,31 @@ export const VoiceProvider = ({ children }) => {
     const auxTrack = auxAudioTrackRef.current;
     const senders = peerConnection.getSenders();
     const sender = (auxTrack && senders.find((item) => item.track === auxTrack))
-      || (senders[1]?.track?.kind === 'audio' ? senders[1] : null);
+      || senders.filter((item) => item.track?.kind === 'audio')[1]
+      || null;
     if (sender) sender.__screenAudioSender = true;
   };
 
   const replaceScreenAudioTrack = async (track) => {
-    await Promise.all(getPeerCalls().map(async (call) => {
+    const calls = getPeerCalls().filter((call) => call.peerConnection);
+    const results = await Promise.all(calls.map(async (call) => {
       const sender = getScreenAudioSender(call.peerConnection);
-      if (!sender || !track) return;
+      if (!sender || !track) {
+        return { replaced: false, error: !sender ? new Error('Screen audio sender is unavailable.') : null };
+      }
       try {
         await sender.replaceTrack(track);
+        return { replaced: true, error: null };
       } catch (error) {
-        console.warn('[ScreenShare] Could not switch the screen audio track:', error);
+        console.warn('[ScreenShare] Could not switch the screen audio track for a participant:', error);
+        return { replaced: false, error };
       }
     }));
+    return {
+      attemptedCount: calls.length,
+      replacedCount: results.filter((result) => result.replaced).length,
+      failedCount: results.filter((result) => result.error).length,
+    };
   };
 
   const disposeScreenAudio = () => {
@@ -1909,8 +1918,19 @@ export const VoiceProvider = ({ children }) => {
         screenStreamRef.current = ss;
         const screenAudioTrack = ss.getAudioTracks()[0] || null;
         screenAudioTrackRef.current = screenAudioTrack;
+        let screenAudioShared = false;
         if (screenAudioTrack) {
-          await replaceScreenAudioTrack(screenAudioTrack);
+          screenAudioTrack.contentHint = 'music';
+          const result = await replaceScreenAudioTrack(screenAudioTrack);
+          screenAudioShared = result.attemptedCount > 0
+            && result.replacedCount === result.attemptedCount;
+          if (!screenAudioShared) {
+            toast.warning(
+              result.replacedCount > 0
+                ? 'Screen audio could not be connected to every participant.'
+                : 'Screen audio was captured but could not be connected to the call.',
+            );
+          }
         } else {
           await replaceScreenAudioTrack(auxAudioTrackRef.current);
           toast.info('Screen audio is unavailable for the selected window or tab.');
@@ -1941,7 +1961,7 @@ export const VoiceProvider = ({ children }) => {
         }
 
         setIsScreenSharing(true);
-        publishCallState({ screen: true, screenAudio: !!screenAudioTrack });
+        publishCallState({ screen: true, screenAudio: screenAudioShared });
 
         setTimeout(() => {
           if (localVideoRef.current && screenStreamRef.current) {
