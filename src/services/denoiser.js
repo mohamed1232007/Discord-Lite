@@ -48,6 +48,11 @@ export const DENOISE_SETTINGS = {
       gateOpenDb: -52,
       gateCloseDb: -58,
       speechDelayMs: 180,
+      highShelfHz: 4000,
+      highShelfGainDb: -6,
+      residualPeakHz: 6000,
+      residualPeakGainDb: -2,
+      residualPeakQ: 1,
       voiceActivityDetector: true,
     },
   },
@@ -117,7 +122,7 @@ const createSileroVad = async (monitorStream, audioContext, setSpeechDetected) =
     startOnLoad: false,
     positiveSpeechThreshold: 0.3,
     negativeSpeechThreshold: 0.22,
-    redemptionMs: 400,
+    redemptionMs: 150,
     preSpeechPadMs: 320,
     minSpeechMs: 64,
     onSpeechStart: () => setSpeechDetected(true),
@@ -376,7 +381,22 @@ export class DenoiseEngine {
         compressor.attack.value = 0.003;
         compressor.release.value = 0.14;
         created.push(compressor);
-        speechGate.connect(compressor);
+
+        const highShelf = ctx.createBiquadFilter();
+        highShelf.type = 'highshelf';
+        highShelf.frequency.value = config.highShelfHz;
+        highShelf.gain.value = config.highShelfGainDb;
+        created.push(highShelf);
+        speechGate.connect(highShelf);
+
+        const residualPeak = ctx.createBiquadFilter();
+        residualPeak.type = 'peaking';
+        residualPeak.frequency.value = config.residualPeakHz;
+        residualPeak.gain.value = config.residualPeakGainDb;
+        residualPeak.Q.value = config.residualPeakQ;
+        created.push(residualPeak);
+        highShelf.connect(residualPeak);
+        residualPeak.connect(compressor);
         compressor.connect(gain);
 
         vad = await createSileroVad(vadMonitor.stream, ctx, (speechDetected) => {
