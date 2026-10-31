@@ -105,9 +105,20 @@ const applyNativeNoiseFallback = async (stream) => {
   if (!track) return;
 
   try {
-    await track.applyConstraints({ noiseSuppression: true, autoGainControl: true });
+    await track.applyConstraints({ noiseSuppression: true, autoGainControl: false });
   } catch (error) {
     console.warn('[Audio] Could not enable native noise suppression fallback:', error);
+  }
+};
+
+const applyVoiceFocusNoiseSuppression = async (stream, enabled) => {
+  const track = stream?.getAudioTracks()[0];
+  if (!track) return;
+
+  try {
+    await track.applyConstraints({ noiseSuppression: { ideal: enabled } });
+  } catch (error) {
+    console.warn('[Audio] Could not update native noise suppression for Voice Focus:', error);
   }
 };
 
@@ -704,7 +715,7 @@ export const VoiceProvider = ({ children }) => {
           audio: {
             deviceId: deviceId !== 'default' ? { exact: deviceId } : undefined,
             echoCancellation: true,
-            noiseSuppression: false,
+            noiseSuppression: { ideal: isNoiseSuppressionEnabled && noiseLevelRef.current === 'voiceFocus' },
             autoGainControl: false,
             channelCount: 1,
             sampleRate: 48000,
@@ -881,7 +892,9 @@ export const VoiceProvider = ({ children }) => {
     try {
       const audioConstraints = {
         echoCancellation: true,
-        noiseSuppression: false,
+        noiseSuppression: {
+          ideal: isNoiseSuppressionEnabled && noiseLevelRef.current === 'voiceFocus',
+        },
         autoGainControl: false,
         channelCount: 1,
         sampleRate: 48000,
@@ -2008,7 +2021,9 @@ export const VoiceProvider = ({ children }) => {
 
     const constraints = {
       echoCancellation: true,
-      noiseSuppression: false,
+      noiseSuppression: {
+        ideal: isNoiseSuppressionEnabled && noiseLevelRef.current === 'voiceFocus',
+      },
       autoGainControl: false,
       channelCount: 1,
       sampleRate: 48000,
@@ -2033,6 +2048,12 @@ export const VoiceProvider = ({ children }) => {
 
     try {
       let active = false;
+      await applyVoiceFocusNoiseSuppression(
+        rawMicStreamRef.current,
+        enabled && level === 'voiceFocus',
+      );
+      if (denoiseGenerationRef.current !== generation) return;
+
       const engine = denoiseEngineRef.current;
 
       if (engine && !engine.destroyed) {

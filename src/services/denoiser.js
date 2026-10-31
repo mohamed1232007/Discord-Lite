@@ -43,7 +43,7 @@ export const DENOISE_SETTINGS = {
       gateCloseDb: -48,
     },
     voiceFocus: {
-      stages: ['rnnoise'],
+      stages: ['gtcrn'],
       highpassHz: 80,
       gateOpenDb: -52,
       gateCloseDb: -58,
@@ -370,10 +370,10 @@ export class DenoiseEngine {
         processedTail.connect(vadMonitor);
 
         const compressor = ctx.createDynamicsCompressor();
-        compressor.threshold.value = -18;
-        compressor.knee.value = 12;
-        compressor.ratio.value = 4;
-        compressor.attack.value = 0.006;
+        compressor.threshold.value = -12;
+        compressor.knee.value = 6;
+        compressor.ratio.value = 2.5;
+        compressor.attack.value = 0.003;
         compressor.release.value = 0.14;
         created.push(compressor);
         speechGate.connect(compressor);
