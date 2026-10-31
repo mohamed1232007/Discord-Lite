@@ -115,9 +115,9 @@ const createSileroVad = async (monitorStream, audioContext, setSpeechDetected) =
     },
     resumeStream: async (stream) => stream,
     startOnLoad: false,
-    positiveSpeechThreshold: 0.4,
-    negativeSpeechThreshold: 0.35,
-    redemptionMs: 250,
+    positiveSpeechThreshold: 0.3,
+    negativeSpeechThreshold: 0.22,
+    redemptionMs: 400,
     preSpeechPadMs: 320,
     minSpeechMs: 64,
     onSpeechStart: () => setSpeechDetected(true),
@@ -339,14 +339,18 @@ export class DenoiseEngine {
         tail = node;
       }
 
-      const gate = new NoiseGateWorkletNode(ctx, {
-        openThreshold: config.gateOpenDb,
-        closeThreshold: config.gateCloseDb,
-        holdMs: config.voiceActivityDetector ? 250 : 120,
-        maxChannels: 1,
-      });
-      created.push(gate);
-      tail.connect(gate);
+      let processedTail = tail;
+      if (!config.voiceActivityDetector) {
+        const gate = new NoiseGateWorkletNode(ctx, {
+          openThreshold: config.gateOpenDb,
+          closeThreshold: config.gateCloseDb,
+          holdMs: 120,
+          maxChannels: 1,
+        });
+        created.push(gate);
+        tail.connect(gate);
+        processedTail = gate;
+      }
 
       const gain = ctx.createGain();
       gain.gain.value = 0;
@@ -354,7 +358,7 @@ export class DenoiseEngine {
         const speechDelay = ctx.createDelay(0.5);
         speechDelay.delayTime.value = config.speechDelayMs / 1000;
         created.push(speechDelay);
-        gate.connect(speechDelay);
+        processedTail.connect(speechDelay);
 
         const speechGate = ctx.createGain();
         speechGate.gain.value = 0;
@@ -363,7 +367,7 @@ export class DenoiseEngine {
 
         vadMonitor = ctx.createMediaStreamDestination();
         created.push(vadMonitor);
-        gate.connect(vadMonitor);
+        processedTail.connect(vadMonitor);
 
         const compressor = ctx.createDynamicsCompressor();
         compressor.threshold.value = -18;
@@ -385,7 +389,7 @@ export class DenoiseEngine {
           );
         });
       } else {
-        gate.connect(gain);
+        processedTail.connect(gain);
       }
       gain.connect(this.mixBus);
 

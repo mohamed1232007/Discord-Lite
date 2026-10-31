@@ -982,6 +982,24 @@ export const VoiceProvider = ({ children }) => {
       : null
   );
 
+  const cameraAccessErrorMessage = (error) => {
+    switch (error?.name) {
+      case 'NotAllowedError':
+      case 'SecurityError':
+        return 'Camera permission is blocked. Allow camera access for Discord Lite in Windows Privacy settings, then restart the app.';
+      case 'NotFoundError':
+        return 'No camera was found. Connect a camera and try again.';
+      case 'NotReadableError':
+        return 'The camera is already in use by another app. Close that app and try again.';
+      case 'OverconstrainedError':
+        return 'The camera could not meet the requested video settings. Check the camera and try again.';
+      case 'AbortError':
+        return 'The camera could not start. Close other apps using it and try again.';
+      default:
+        return null;
+    }
+  };
+
   const callErrorMessage = (error, fallback) => {
     const microphoneMessage = microphoneErrorMessage(error);
     if (microphoneMessage) return microphoneMessage;
@@ -1770,7 +1788,7 @@ export const VoiceProvider = ({ children }) => {
     }
 
     cameraTogglePendingRef.current = true;
-    let acquiredTrack = null;
+    let cameraStream = null;
     try {
       if (cameraEnabledRef.current) {
         const blankTrack = createBlankVideoTrack();
@@ -1784,15 +1802,17 @@ export const VoiceProvider = ({ children }) => {
         return;
       }
 
-      const cameraStream = await navigator.mediaDevices.getUserMedia({
+      cameraStream = await navigator.mediaDevices.getUserMedia({
         video: {
           width: { ideal: 1280 },
           height: { ideal: 720 },
           frameRate: { ideal: 30 },
         },
       });
-      acquiredTrack = cameraStream.getVideoTracks()[0];
-      if (!acquiredTrack) throw new Error('Camera did not provide a video track.');
+      const acquiredTrack = cameraStream.getVideoTracks()[0];
+      if (!acquiredTrack) {
+        throw new Error('Camera access succeeded, but no video track was provided.');
+      }
       acquiredTrack.contentHint = 'motion';
 
       await replaceLocalVideoTrack(acquiredTrack, {
@@ -1810,9 +1830,10 @@ export const VoiceProvider = ({ children }) => {
       setIsVideoEnabled(true);
       publishCallState({ camera: true });
     } catch (error) {
-      acquiredTrack?.stop();
+      cameraStream?.getTracks().forEach((track) => track.stop());
       console.error('[toggleCamera]', error);
-      toast.error('Could not access camera. Please check browser permissions.');
+      const accessMessage = cameraAccessErrorMessage(error);
+      toast.error(accessMessage || `The camera started, but could not be connected to the call: ${error.message}`);
     } finally {
       cameraTogglePendingRef.current = false;
     }

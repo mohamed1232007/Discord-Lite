@@ -25,27 +25,35 @@ const BACKEND_URL = import.meta.env.VITE_BACKEND_URL || 'http://localhost:5000/a
 const createParticipantAudioPipeline = (context, track, volume) => {
   const source = context.createMediaStreamSource(new MediaStream([track]));
   const gain = context.createGain();
-  const compressor = context.createDynamicsCompressor();
+  const leveler = context.createDynamicsCompressor();
+  const limiter = context.createDynamicsCompressor();
   const destination = context.createMediaStreamDestination();
 
   gain.gain.value = volume;
-  compressor.threshold.value = -3;
-  compressor.knee.value = 0;
-  compressor.ratio.value = 12;
-  compressor.attack.value = 0.003;
-  compressor.release.value = 0.15;
+  leveler.threshold.value = -24;
+  leveler.knee.value = 18;
+  leveler.ratio.value = 3;
+  leveler.attack.value = 0.01;
+  leveler.release.value = 0.2;
+  limiter.threshold.value = -1;
+  limiter.knee.value = 0;
+  limiter.ratio.value = 20;
+  limiter.attack.value = 0.003;
+  limiter.release.value = 0.15;
 
-  source.connect(gain);
-  gain.connect(compressor);
-  compressor.connect(destination);
+  source.connect(leveler);
+  leveler.connect(gain);
+  gain.connect(limiter);
+  limiter.connect(destination);
 
-  return { track, context, source, gain, compressor, destination };
+  return { track, context, source, gain, leveler, limiter, destination };
 };
 
 const disposeParticipantAudioPipeline = (pipeline) => {
   pipeline.source.disconnect();
+  pipeline.leveler.disconnect();
   pipeline.gain.disconnect();
-  pipeline.compressor.disconnect();
+  pipeline.limiter.disconnect();
 };
 
 export default function CallScreen({ onOpenChat }) {
@@ -743,7 +751,7 @@ export default function CallScreen({ onOpenChat }) {
           </div>
         ) : isVideoCallActive ? (
           /* حالة 2: عرض فيديو كل أعضاء المكالمة */
-          <div className="grid w-full max-w-[860px] grid-cols-1 place-items-center gap-3 overflow-y-auto sm:grid-cols-2">
+          <div className="grid w-full max-w-[860px] grid-cols-1 place-items-center gap-3 sm:grid-cols-2">
             {activeParticipants.map((participant) => {
               const isLocal = participant.user_id === currentUser?.id;
               const participantUser = participant.user || {};
@@ -768,7 +776,7 @@ export default function CallScreen({ onOpenChat }) {
                     />
                   )}
                   {!cameraVisible && (
-                    <div className="flex flex-col items-center gap-3">
+                    <div className="absolute inset-0 flex items-center justify-center">
                       <div                       className={`w-20 h-20 rounded-full bg-[#18191c] border-2 flex items-center justify-center text-white text-2xl font-bold shadow-xl ${
                         state.muted ? 'border-[#f23f43]' : 'border-[#23a55a]'
                       }`}>
