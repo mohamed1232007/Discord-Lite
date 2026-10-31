@@ -203,6 +203,7 @@ export const VoiceProvider = ({ children }) => {
   });
   const dataConnectionRef = useRef(new Map());
   const incomingCallRef = useRef(incomingCall);
+  const dismissedIncomingRoomsRef = useRef(new Map());
   const answeringCallRef = useRef(false);
   const pendingIncomingRoomRef = useRef(null);
   const callParticipantsRef = useRef(callParticipants);
@@ -305,7 +306,6 @@ export const VoiceProvider = ({ children }) => {
       if (payload.videoCall && activeCallRef.current) {
         activeCallRef.current = { ...activeCallRef.current, isVideo: true };
         setActiveCall(activeCallRef.current);
-        if (!cameraEnabledRef.current) toggleCamera();
       }
       return;
     }
@@ -319,7 +319,6 @@ export const VoiceProvider = ({ children }) => {
         activeCallRef.current = { ...activeCallRef.current, isVideo: true };
         setActiveCall(activeCallRef.current);
         pendingVideoCallRef.current = false;
-        if (!cameraEnabledRef.current) toggleCamera();
       }
     }
   };
@@ -1259,6 +1258,11 @@ export const VoiceProvider = ({ children }) => {
 
   const triggerIncoming = async (invitation) => {
     if (activeCallRef.current || incomingCallRef.current || pendingIncomingRoomRef.current) return;
+    const now = Date.now();
+    dismissedIncomingRoomsRef.current.forEach((expiresAt, roomId) => {
+      if (expiresAt <= now) dismissedIncomingRoomsRef.current.delete(roomId);
+    });
+    if (dismissedIncomingRoomsRef.current.has(invitation.roomId)) return;
     pendingIncomingRoomRef.current = invitation.roomId;
 
     try {
@@ -1470,11 +1474,12 @@ export const VoiceProvider = ({ children }) => {
       setIsDeafened(false);
       mutedBeforeDeafenRef.current = false;
       markCallConnected();
+      const isVideoCall = pendingVideoCallRef.current;
       const callState = {
         roomId: inc.roomId,
         callId: inc.roomId,
         friend: inc.caller,
-        isVideo: pendingVideoCallRef.current,
+        isVideo: isVideoCall,
         participants,
       };
       localCallStateRef.current = {
@@ -1482,18 +1487,15 @@ export const VoiceProvider = ({ children }) => {
         deafened: false,
         camera: false,
         screen: false,
-        videoCall: pendingVideoCallRef.current,
+        videoCall: isVideoCall,
         noiseSuppressionActive: noiseSuppressionActiveRef.current,
       };
       activeCallRef.current = callState;
       setActiveCall(callState);
       incomingCallRef.current = null;
       setIncomingCall(null);
+      pendingVideoCallRef.current = false;
       syncPeerCalls(participants);
-      if (pendingVideoCallRef.current && !cameraEnabledRef.current) {
-        pendingVideoCallRef.current = false;
-        await toggleCamera();
-      }
       return true;
     } catch (err) {
       console.error('[answerCall] error:', err);
@@ -1580,6 +1582,9 @@ export const VoiceProvider = ({ children }) => {
     const roomId = dbCallIdRef.current;
     const hadCall = !!activeCallRef.current || !!incomingCallRef.current;
     const wasIncoming = !!incomingCallRef.current && !activeCallRef.current;
+    if (wasIncoming && roomId) {
+      dismissedIncomingRoomsRef.current.set(roomId, Date.now() + 60_000);
+    }
     if (hadCall) playSoundEffect('disconnect');
     if (updateDb && roomId && user?.id) {
       (async () => {

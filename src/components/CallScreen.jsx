@@ -743,7 +743,7 @@ export default function CallScreen({ onOpenChat }) {
           </div>
         ) : isVideoCallActive ? (
           /* حالة 2: عرض فيديو كل أعضاء المكالمة */
-          <div className="grid grid-cols-1 sm:grid-cols-2 xl:grid-cols-3 auto-rows-max gap-4 w-full h-full max-w-6xl items-center justify-center overflow-y-auto">
+          <div className="grid w-full max-w-[860px] grid-cols-1 place-items-center gap-3 overflow-y-auto sm:grid-cols-2">
             {activeParticipants.map((participant) => {
               const isLocal = participant.user_id === currentUser?.id;
               const participantUser = participant.user || {};
@@ -754,7 +754,7 @@ export default function CallScreen({ onOpenChat }) {
               const remoteVideoStream = isLocal ? null : getRemoteStream(participant.user_id);
               const cameraVisible = !!state.camera && (isLocal || !!remoteVideoStream);
               return (
-                <div key={participant.user_id} className="group relative aspect-video w-full min-h-[220px] max-h-[420px] bg-[#09080c] border border-[#1e1f22] rounded-xl flex items-center justify-center overflow-hidden shadow-2xl transition-all hover:border-[#2b2d31]">
+                <div key={participant.user_id} className="group relative aspect-video w-full max-w-[420px] overflow-hidden rounded-xl border border-[#1e1f22] bg-[#09080c] shadow-2xl transition-all hover:border-[#2b2d31]">
                   {cameraVisible && (
                     <video
                       ref={(element) => setVideoStream(
