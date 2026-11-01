@@ -65,6 +65,7 @@ export default function DMSidebar({
     speakers,
     selectedMic,
     selectedSpeaker,
+    speakingUsers,
     changeMicrophone,
     changeSpeaker,
     updateAudioDevices,
@@ -520,7 +521,9 @@ export default function DMSidebar({
                 title={`@${currentUsername}`}
               >
                 <div className="relative h-9 w-9 shrink-0">
-                  <div className="h-9 w-9 overflow-hidden rounded-full bg-[#1e1f22] flex items-center justify-center text-xs font-semibold text-white">
+                  <div className={`h-9 w-9 overflow-hidden rounded-full bg-[#1e1f22] flex items-center justify-center text-xs font-semibold text-white transition-all duration-150 ${
+                    speakingUsers?.[user.id] ? 'speaking-ring' : ''
+                  }`}>
                     {user.avatar_url ? (
                       <img
                         src={user.avatar_url}

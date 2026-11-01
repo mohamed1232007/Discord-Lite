@@ -247,6 +247,16 @@ export class DenoiseEngine {
     return !!(this.enabled && this.chain);
   }
 
+  setMicGain(gainValue) {
+    if (!this.micGain || !this.ctx) return;
+    const val = Math.max(0, Math.min(2.0, gainValue));
+    try {
+      this.micGain.gain.setTargetAtTime(val, this.ctx.currentTime, 0.02);
+    } catch {
+      this.micGain.gain.value = val;
+    }
+  }
+
   async _ensureGraph() {
     if (this.destroyed) throw new Error('The denoise engine has been destroyed.');
     if (this.ctx) return;
@@ -266,7 +276,13 @@ export class DenoiseEngine {
 
     const mixBus = ctx.createGain();
     const destination = ctx.createMediaStreamDestination();
-    mixBus.connect(destination);
+
+    // عقدة كسب المايك (Microphone Volume / Gain Control)
+    const micGain = ctx.createGain();
+    micGain.gain.value = 1.0;
+
+    mixBus.connect(micGain);
+    micGain.connect(destination);
 
     const dryGain = ctx.createGain();
     dryGain.gain.value = 1;
@@ -274,6 +290,7 @@ export class DenoiseEngine {
 
     this.ctx = ctx;
     this.mixBus = mixBus;
+    this.micGain = micGain;
     this.destination = destination;
     this.dryGain = dryGain;
 

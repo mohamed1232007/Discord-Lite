@@ -22,6 +22,8 @@ const DEFAULT_TURN_URLS = [
 ];
 const SELECTED_MIC_STORAGE_KEY = 'dis_lite_selected_mic';
 const SELECTED_SPEAKER_STORAGE_KEY = 'dis_lite_selected_speaker';
+const MIC_VOLUME_STORAGE_KEY = 'dis_lite_mic_volume';
+const SPEAKER_VOLUME_STORAGE_KEY = 'dis_lite_speaker_volume';
 const PARTICIPANT_AUDIO_STORAGE_KEY = 'dis_lite_participant_audio';
 const STREAM_AUDIO_STORAGE_KEY = 'dis_lite_stream_audio';
 const NOISE_LEVEL_STORAGE_KEY = 'dis_lite_noise_level';
@@ -87,6 +89,16 @@ const getSavedAudioDevice = (storageKey) => {
   } catch (error) {
     console.warn('[Audio] Could not restore saved device selection:', error);
     return 'default';
+  }
+};
+
+const getSavedVolume = (storageKey, defaultVal = 1) => {
+  try {
+    const val = parseFloat(window.localStorage.getItem(storageKey));
+    return Number.isFinite(val) ? Math.max(0, Math.min(2, val)) : defaultVal;
+  } catch (error) {
+    console.warn('[Audio] Could not restore volume:', error);
+    return defaultVal;
   }
 };
 
@@ -170,11 +182,14 @@ export const VoiceProvider = ({ children }) => {
   const [speakers,        setSpeakers]       = useState([]);
   const [selectedMic,     setSelectedMic]    = useState(() => getSavedAudioDevice(SELECTED_MIC_STORAGE_KEY));
   const [selectedSpeaker, setSelectedSpeaker]= useState(() => getSavedAudioDevice(SELECTED_SPEAKER_STORAGE_KEY));
+  const [micVolume,       setMicVolume]      = useState(() => getSavedVolume(MIC_VOLUME_STORAGE_KEY, 1));
+  const [speakerVolume,   setSpeakerVolume]  = useState(() => getSavedVolume(SPEAKER_VOLUME_STORAGE_KEY, 1));
   const [participantAudioSettings, setParticipantAudioSettings] = useState(getSavedParticipantAudio);
   const [streamAudioSettings, setStreamAudioSettings] = useState(getSavedStreamAudio);
   const [isNoiseSuppressionEnabled, setIsNoiseSuppressionEnabled] = useState(true);
   const [isNoiseSuppressionActive, setIsNoiseSuppressionActive] = useState(false);
   const [noiseLevel, setNoiseLevel] = useState(getSavedNoiseLevel);
+  const [speakingUsers, setSpeakingUsers] = useState({});
 
   // ── Refs (لا تتغيرش بين renders) ──────────────────────
   const peerRef         = useRef(null);      // PeerJS instance
@@ -800,6 +815,36 @@ export const VoiceProvider = ({ children }) => {
     }
   };
 
+  // دالة تغيير حجم صوت المايك (Microphone Gain/Volume)
+  const changeMicVolume = (vol) => {
+    const next = Math.max(0, Math.min(2, Number(vol)));
+    setMicVolume(next);
+    try {
+      window.localStorage.setItem(MIC_VOLUME_STORAGE_KEY, String(next));
+    } catch {}
+
+    const engine = denoiseEngineRef.current;
+    if (engine && !engine.destroyed) {
+      engine.setMicGain(next);
+    }
+  };
+
+  // دالة تغيير حجم صوت السماعة الرئيسي (Master Output/Speaker Volume)
+  const changeSpeakerVolume = (vol) => {
+    const next = Math.max(0, Math.min(2, Number(vol)));
+    setSpeakerVolume(next);
+    try {
+      window.localStorage.setItem(SPEAKER_VOLUME_STORAGE_KEY, String(next));
+    } catch {}
+
+    // تحديث عناصر الصوت فوراً
+    remoteAudioElementsRef.current.forEach((el) => {
+      if (el) {
+        el.volume = Math.min(1, Math.max(0, next > 1 ? 1 : next));
+      }
+    });
+  };
+
   // ─────────────────────────────────────────────────────
   // Call sound effects
   // ─────────────────────────────────────────────────────
@@ -948,6 +993,9 @@ export const VoiceProvider = ({ children }) => {
 
         if (result.track) audioTrack = result.track;
         noiseActive = isNoiseSuppressionEnabled && result.active;
+
+        // تطبيق مستوى صوت المايك الحالي
+        engine.setMicGain(micVolume);
 
         if (isNoiseSuppressionEnabled && !result.active) {
           await applyNativeNoiseFallback(rawStream);
@@ -1744,6 +1792,7 @@ export const VoiceProvider = ({ children }) => {
     setCallParticipants([]);
     callParticipantsRef.current = [];
     setRemoteStreams([]);
+    setSpeakingUsers({});
     setCallStatus('idle');
     setIsMuted(false);
     setIsDeafened(false);
@@ -1758,6 +1807,119 @@ export const VoiceProvider = ({ children }) => {
 
   // نصدّر endCall كـ wrapper يقبل بدون argument أيضاً
   const endCall = (updateDb = true) => endCallCleanup(updateDb);
+
+  // ─────────────────────────────────────────────────────
+  // Speaking Detection (Audio Meter / Green Ring for Active Speakers)
+  // ─────────────────────────────────────────────────────
+  useEffect(() => {
+    if (!activeCall || callStatus !== 'connected') {
+      setSpeakingUsers({});
+      return;
+    }
+
+    const AudioContextConstructor = window.AudioContext || window.webkitAudioContext;
+    if (!AudioContextConstructor) return;
+
+    let meterCtx;
+    try {
+      meterCtx = new AudioContextConstructor();
+    } catch {
+      return;
+    }
+
+    const analysers = new Map(); // userId -> { analyser, dataArray }
+
+    // 1. Local mic analyser
+    const localTrack = localStreamRef.current?.getAudioTracks().find((t) => t.readyState === 'live' && t !== auxAudioTrackRef.current);
+    if (localTrack && user?.id && !isMuted) {
+      try {
+        const source = meterCtx.createMediaStreamSource(new MediaStream([localTrack]));
+        const analyser = meterCtx.createAnalyser();
+        analyser.fftSize = 512;
+        analyser.smoothingTimeConstant = 0.4;
+        source.connect(analyser);
+        analysers.set(user.id, {
+          analyser,
+          dataArray: new Uint8Array(analyser.frequencyBinCount),
+          isLocal: true,
+        });
+      } catch (e) {
+        console.warn('[SpeakingMeter] local setup error:', e);
+      }
+    }
+
+    // 2. Remote streams analysers
+    remoteStreams.forEach(({ userId, stream }) => {
+      const remoteTrack = stream?.getAudioTracks().find((t) => t.readyState === 'live');
+      if (remoteTrack && userId && !remoteCallStates[userId]?.muted) {
+        try {
+          const source = meterCtx.createMediaStreamSource(new MediaStream([remoteTrack]));
+          const analyser = meterCtx.createAnalyser();
+          analyser.fftSize = 512;
+          analyser.smoothingTimeConstant = 0.4;
+          source.connect(analyser);
+          analysers.set(userId, {
+            analyser,
+            dataArray: new Uint8Array(analyser.frequencyBinCount),
+            isLocal: false,
+          });
+        } catch (e) {
+          console.warn('[SpeakingMeter] remote setup error for', userId, e);
+        }
+      }
+    });
+
+    let animId;
+    let lastState = {};
+
+    const checkAudioLevels = () => {
+      const nextSpeaking = {};
+
+      analysers.forEach(({ analyser, dataArray, isLocal }, uid) => {
+        if (isLocal && isMuted) {
+          nextSpeaking[uid] = false;
+          return;
+        }
+        if (!isLocal && remoteCallStates[uid]?.muted) {
+          nextSpeaking[uid] = false;
+          return;
+        }
+
+        analyser.getByteFrequencyData(dataArray);
+        let sum = 0;
+        for (let i = 0; i < dataArray.length; i++) {
+          sum += dataArray[i];
+        }
+        const average = sum / dataArray.length;
+        // Threshold for human voice activity in average frequency energy
+        nextSpeaking[uid] = average > 12;
+      });
+
+      // Avoid unnecessary re-renders
+      let changed = false;
+      const allUids = new Set([...Object.keys(lastState), ...Object.keys(nextSpeaking)]);
+      for (const uid of allUids) {
+        if (!!lastState[uid] !== !!nextSpeaking[uid]) {
+          changed = true;
+          break;
+        }
+      }
+
+      if (changed) {
+        lastState = nextSpeaking;
+        setSpeakingUsers(nextSpeaking);
+      }
+
+      animId = requestAnimationFrame(checkAudioLevels);
+    };
+
+    animId = requestAnimationFrame(checkAudioLevels);
+
+    return () => {
+      if (animId) cancelAnimationFrame(animId);
+      meterCtx?.close?.().catch?.(() => {});
+    };
+  }, [activeCall, callStatus, remoteStreams, isMuted, remoteCallStates, user?.id]);
 
   // ─────────────────────────────────────────────────────
   // 6. Toggle Mute (كتم المايك محلياً وفي شبكة الـ WebRTC فوراً)
@@ -1788,7 +1950,7 @@ export const VoiceProvider = ({ children }) => {
     setIsDeafened(next);
     remoteAudioElementsRef.current.forEach((element) => {
       element.muted = next;
-      element.volume = next ? 0 : 1;
+      element.volume = next ? 0 : Math.min(1, Math.max(0, speakerVolume > 1 ? 1 : speakerVolume));
     });
 
     let muted = isMuted;
@@ -2199,6 +2361,11 @@ export const VoiceProvider = ({ children }) => {
       speakers,
       selectedMic,
       selectedSpeaker,
+      micVolume,
+      speakerVolume,
+      changeMicVolume,
+      changeSpeakerVolume,
+      speakingUsers,
       participantAudioSettings,
       streamAudioSettings,
       setParticipantVolume,

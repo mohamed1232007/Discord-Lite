@@ -41,6 +41,10 @@ export default function SettingsPage({ onClose }) {
     speakers,
     selectedMic,
     selectedSpeaker,
+    micVolume,
+    speakerVolume,
+    changeMicVolume,
+    changeSpeakerVolume,
     changeMicrophone,
     changeSpeaker,
     isNoiseSuppressionEnabled,
@@ -173,8 +177,66 @@ export default function SettingsPage({ onClose }) {
                     />
                   </div>
                 </div>
-                <p className="text-[11px] text-[#80848e] -mt-5 mb-6">
-                  Microphone and speaker selections are saved on this computer.
+
+                {/* ── Volume Sliders (Microphone Volume & Speaker Volume) like Discord ── */}
+                <div className="flex gap-6 mb-7">
+                  {/* Microphone Volume */}
+                  <div className="flex-1">
+                    <div className="flex items-center justify-between mb-2">
+                      <label htmlFor="mic-volume-slider" className="text-xs font-semibold text-[#dbdee1] tracking-wide">
+                        Microphone Volume
+                      </label>
+                      <span className="text-xs text-[#949ba4] font-medium tabular-nums">
+                        {Math.round(micVolume * 100)}%
+                      </span>
+                    </div>
+                    <div className="py-1">
+                      <input
+                        id="mic-volume-slider"
+                        type="range"
+                        min="0"
+                        max="200"
+                        step="1"
+                        value={Math.round(micVolume * 100)}
+                        onChange={(e) => changeMicVolume(Number(e.target.value) / 100)}
+                        className="discord-volume-slider w-full"
+                        style={{
+                          background: `linear-gradient(to right, #5865f2 0%, #5865f2 ${(Math.round(micVolume * 100) / 200) * 100}%, #3b3d44 ${(Math.round(micVolume * 100) / 200) * 100}%, #3b3d44 100%)`,
+                        }}
+                      />
+                    </div>
+                  </div>
+
+                  {/* Speaker Volume */}
+                  <div className="flex-1">
+                    <div className="flex items-center justify-between mb-2">
+                      <label htmlFor="speaker-volume-slider" className="text-xs font-semibold text-[#dbdee1] tracking-wide">
+                        Speaker Volume
+                      </label>
+                      <span className="text-xs text-[#949ba4] font-medium tabular-nums">
+                        {Math.round(speakerVolume * 100)}%
+                      </span>
+                    </div>
+                    <div className="py-1">
+                      <input
+                        id="speaker-volume-slider"
+                        type="range"
+                        min="0"
+                        max="200"
+                        step="1"
+                        value={Math.round(speakerVolume * 100)}
+                        onChange={(e) => changeSpeakerVolume(Number(e.target.value) / 100)}
+                        className="discord-volume-slider w-full"
+                        style={{
+                          background: `linear-gradient(to right, #5865f2 0%, #5865f2 ${(Math.round(speakerVolume * 100) / 200) * 100}%, #3b3d44 ${(Math.round(speakerVolume * 100) / 200) * 100}%, #3b3d44 100%)`,
+                        }}
+                      />
+                    </div>
+                  </div>
+                </div>
+
+                <p className="text-[11px] text-[#80848e] -mt-4 mb-6">
+                  Microphone volume and speaker volume settings are saved on this computer.
                 </p>
 
                 {/* ── NOISE SUPPRESSION section ── */}

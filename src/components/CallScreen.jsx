@@ -96,6 +96,7 @@ export default function CallScreen({ onOpenChat }) {
     speakers,
     selectedMic,
     selectedSpeaker,
+    speakingUsers,
     changeMicrophone,
     changeSpeaker,
     inviteParticipants,
@@ -706,7 +707,9 @@ export default function CallScreen({ onOpenChat }) {
                     />
                   ) : (
                     <div className="flex flex-col items-center">
-                      <div className="w-12 h-12 rounded-full bg-[#1e1f22] border-2 border-[#2b2d31] flex items-center justify-center text-white font-bold text-sm">
+                      <div className={`w-12 h-12 rounded-full bg-[#1e1f22] border-2 flex items-center justify-center text-white font-bold text-sm transition-all duration-150 ${
+                        speakingUsers[currentUser?.id] ? 'speaking-ring border-[#23a55a]' : 'border-[#2b2d31]'
+                      }`}>
                         {currentUser?.avatar_url ? (
                           <img src={currentUser.avatar_url} alt={myName} className="w-full h-full rounded-full object-cover" />
                         ) : (
@@ -736,8 +739,10 @@ export default function CallScreen({ onOpenChat }) {
                     />
                   ) : (
                     <div className="flex flex-col items-center">
-                      <div className={`w-12 h-12 rounded-full bg-[#1e1f22] border-2 flex items-center justify-center text-white font-bold text-sm ${
-                        isConnected ? 'border-[#23a55a]' : 'border-[#f0b132]'
+                      <div className={`w-12 h-12 rounded-full bg-[#1e1f22] border-2 flex items-center justify-center text-white font-bold text-sm transition-all duration-150 ${
+                        speakingUsers[activeCall.friend?.id]
+                          ? 'speaking-ring border-[#23a55a]'
+                          : isConnected ? 'border-[#23a55a]' : 'border-[#f0b132]'
                       }`}>
                         {activeCall.friend?.avatar_url ? (
                           <img src={activeCall.friend.avatar_url} alt={friendName} className="w-full h-full rounded-full object-cover" />
@@ -780,8 +785,12 @@ export default function CallScreen({ onOpenChat }) {
                   )}
                   {!cameraVisible && (
                     <div className="absolute inset-0 flex items-center justify-center">
-                      <div                       className={`w-20 h-20 rounded-full bg-[#18191c] border-2 flex items-center justify-center text-white text-2xl font-bold shadow-xl ${
-                        state.muted ? 'border-[#f23f43]' : 'border-[#23a55a]'
+                      <div className={`w-20 h-20 rounded-full bg-[#18191c] border-2 flex items-center justify-center text-white text-2xl font-bold shadow-xl transition-all duration-150 ${
+                        state.muted
+                          ? 'border-[#f23f43]'
+                          : speakingUsers[participant.user_id]
+                            ? 'speaking-ring border-[#23a55a]'
+                            : 'border-[#23a55a]'
                       }`}>
                         {participantUser.avatar_url ? (
                           <img src={participantUser.avatar_url} alt={name} className="w-full h-full rounded-full object-cover" />
@@ -825,11 +834,16 @@ export default function CallScreen({ onOpenChat }) {
                 const participantState = getParticipantState(participant);
                 const muted = participantState.muted;
                 const noiseActive = participantState.noiseSuppressionActive;
+                const isSpeaking = !!speakingUsers[participant.user_id];
 
                 return (
                   <div key={participant.user_id} className="group relative aspect-video w-full max-w-[420px] overflow-hidden rounded-xl border border-[#1e1f22] bg-[#09080c] shadow-2xl transition-all hover:border-[#2b2d31]">
-                    <div className={`absolute left-1/2 top-1/2 flex h-20 w-20 -translate-x-1/2 -translate-y-1/2 items-center justify-center overflow-hidden rounded-full border-2 bg-[#1e1f22] text-2xl font-bold text-white shadow-xl ${
-                      muted ? 'border-[#f23f43]' : 'border-[#23a55a]'
+                    <div className={`absolute left-1/2 top-1/2 flex h-20 w-20 -translate-x-1/2 -translate-y-1/2 items-center justify-center overflow-hidden rounded-full border-2 bg-[#1e1f22] text-2xl font-bold text-white shadow-xl transition-all duration-150 ${
+                      muted
+                        ? 'border-[#f23f43]'
+                        : isSpeaking
+                          ? 'speaking-ring border-[#23a55a]'
+                          : 'border-[#23a55a]'
                     }`}>
                       {participantUser.avatar_url ? (
                         <img src={participantUser.avatar_url} alt={participantName} className="w-full h-full rounded-full object-cover" />
