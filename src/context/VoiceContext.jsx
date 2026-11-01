@@ -819,21 +819,25 @@ export const VoiceProvider = ({ children }) => {
     return audio;
   };
 
-  const playSoundEffect = (name) => {
+  const playSoundEffect = (name, volume = 0.35) => {
     const audio = getSoundEffect(name);
     audio.pause();
     audio.currentTime = 0;
     audio.loop = false;
+    audio.volume = volume;
     audio.play().catch((error) => {
       console.warn(`[Sound] Could not play ${name}.mp3:`, error);
     });
   };
+
+  const playNotificationSound = () => playSoundEffect('notification', 0.45);
 
   const startCallRingtone = () => {
     const audio = getSoundEffect('calling');
     if (!audio.paused) return;
     audio.loop = true;
     audio.currentTime = 0;
+    audio.volume = 0.25;
     audio.play().catch((error) => {
       console.warn('[Sound] Could not play calling.mp3:', error);
     });
@@ -2197,6 +2201,7 @@ export const VoiceProvider = ({ children }) => {
       setParticipantMuted,
       setStreamVolume,
       setStreamMuted,
+      playNotificationSound,
       changeMicrophone,
       changeSpeaker,
       updateAudioDevices,

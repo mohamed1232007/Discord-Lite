@@ -56,6 +56,9 @@ export const DENOISE_SETTINGS = {
       warmthHz: 250,
       warmthGainDb: 3,
       warmthQ: 0.8,
+      presenceHz: 5000,
+      presenceGainDb: 1.5,
+      presenceQ: 1,
       voiceActivityDetector: true,
     },
   },
@@ -400,14 +403,22 @@ export class DenoiseEngine {
         created.push(warmth);
         clarity.connect(warmth);
 
+        const presence = ctx.createBiquadFilter();
+        presence.type = 'peaking';
+        presence.frequency.value = config.presenceHz;
+        presence.gain.value = config.presenceGainDb;
+        presence.Q.value = config.presenceQ;
+        created.push(presence);
+        warmth.connect(presence);
+
         const compressor = ctx.createDynamicsCompressor();
-        compressor.threshold.value = -12;
-        compressor.knee.value = 12;
-        compressor.ratio.value = 3;
-        compressor.attack.value = 0.01;
-        compressor.release.value = 0.1;
+        compressor.threshold.value = -18;
+        compressor.knee.value = 10;
+        compressor.ratio.value = 2.5;
+        compressor.attack.value = 0.005;
+        compressor.release.value = 0.12;
         created.push(compressor);
-        warmth.connect(compressor);
+        presence.connect(compressor);
         compressor.connect(gain);
 
         vad = await createSileroVad(vadMonitor.stream, ctx, (speechDetected) => {

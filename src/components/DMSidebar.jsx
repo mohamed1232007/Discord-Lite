@@ -66,7 +66,8 @@ export default function DMSidebar({ selectedChat, onSelectChat, onShowCall, onOp
     toggleDeafen,
     toggleCamera,
     toggleScreenShare,
-    endCall
+    endCall,
+    playNotificationSound,
   } = useVoice();
 
   const [friends, setFriends] = useState([]);
@@ -91,6 +92,11 @@ export default function DMSidebar({ selectedChat, onSelectChat, onShowCall, onOp
   const unreadCursorRef = useRef(null);
   const unreadPollInFlightRef = useRef(false);
   const selectedChatIdRef = useRef(selectedChat?.id);
+  const playNotificationSoundRef = useRef(playNotificationSound);
+
+  useEffect(() => {
+    playNotificationSoundRef.current = playNotificationSound;
+  }, [playNotificationSound]);
 
   // إغلاق القوائم عند النقر في أي مكان خارجها
   useEffect(() => {
@@ -172,6 +178,11 @@ export default function DMSidebar({ selectedChat, onSelectChat, onShowCall, onOp
         if (!response.ok) throw new Error(`Unread messages request failed (${response.status}).`);
 
         const data = await response.json();
+        const newUnreadMessages = Object.entries(data.unreadBySender || {}).some(
+          ([senderId, count]) => senderId !== selectedChatIdRef.current && count > 0,
+        );
+        if (after && newUnreadMessages) playNotificationSoundRef.current();
+
         const nextCounts = { ...unreadCountsRef.current };
         Object.entries(data.unreadBySender || {}).forEach(([senderId, count]) => {
           if (senderId !== selectedChatIdRef.current) {
