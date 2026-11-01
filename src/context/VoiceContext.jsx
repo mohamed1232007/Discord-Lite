@@ -1265,6 +1265,10 @@ export const VoiceProvider = ({ children }) => {
       return [];
     }
 
+    if (dbCallIdRef.current !== roomId || !localMembershipActiveRef.current) {
+      return [];
+    }
+
     const participantsChanged = JSON.stringify(callParticipantsRef.current) !== JSON.stringify(participants);
     callParticipantsRef.current = participants;
     if (participantsChanged) setCallParticipants(participants);

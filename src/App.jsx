@@ -160,6 +160,7 @@ function MainApp() {
             {/* 2. القائمة الجانبية الأصلية للرسائل والأصدقاء */}
             <DMSidebar
               selectedChat={selectedChat}
+              isChatVisible={isChatVisible}
               onSelectChat={openChat}
               onShowCall={() => setIsChatVisible(false)}
               onOpenAuth={() => changeView('login')}
@@ -173,18 +174,22 @@ function MainApp() {
                   if (chatUser?.id) openChat(chatUser);
                 }} />
               </Suspense>
-            ) : selectedChat ? (
-              <ChatView
-                key={selectedChat.id}
-                user={selectedChat}
-                onBack={() => openChat(null)}
-                onCallStarted={() => setIsChatVisible(false)}
-              />
-            ) : (
+            ) : null}
+
+            {selectedChat ? (
+              <div className={activeCall && !isChatVisible ? 'hidden' : 'flex min-w-0 flex-1'}>
+                <ChatView
+                  key={selectedChat.id}
+                  user={selectedChat}
+                  onBack={() => openChat(null)}
+                  onCallStarted={() => setIsChatVisible(false)}
+                />
+              </div>
+            ) : !activeCall ? (
               <FriendsView
                 onStartChat={openChat}
               />
-            )}
+            ) : null}
           </div>
         </div>
       )}

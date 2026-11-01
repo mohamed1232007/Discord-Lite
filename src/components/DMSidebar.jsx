@@ -45,7 +45,13 @@ const readStoredCursor = (key) => {
   }
 };
 
-export default function DMSidebar({ selectedChat, onSelectChat, onShowCall, onOpenAuth }) {
+export default function DMSidebar({
+  selectedChat,
+  isChatVisible,
+  onSelectChat,
+  onShowCall,
+  onOpenAuth,
+}) {
   const { user, token, onlineUsers, signOut } = useAuth();
   const toast = useToast();
   const {
@@ -91,7 +97,7 @@ export default function DMSidebar({ selectedChat, onSelectChat, onShowCall, onOp
   const unreadCountsRef = useRef({});
   const unreadCursorRef = useRef(null);
   const unreadPollInFlightRef = useRef(false);
-  const selectedChatIdRef = useRef(selectedChat?.id);
+  const selectedChatIdRef = useRef(isChatVisible ? selectedChat?.id : null);
   const playNotificationSoundRef = useRef(playNotificationSound);
 
   useEffect(() => {
@@ -100,8 +106,8 @@ export default function DMSidebar({ selectedChat, onSelectChat, onShowCall, onOp
 
   // إغلاق القوائم عند النقر في أي مكان خارجها
   useEffect(() => {
-    selectedChatIdRef.current = selectedChat?.id;
-  }, [selectedChat?.id]);
+    selectedChatIdRef.current = isChatVisible ? selectedChat?.id : null;
+  }, [isChatVisible, selectedChat?.id]);
 
   useEffect(() => {
     const handleClickOutside = (e) => {
@@ -216,7 +222,7 @@ export default function DMSidebar({ selectedChat, onSelectChat, onShowCall, onOp
       window.clearInterval(interval);
       document.removeEventListener('visibilitychange', handleVisibilityChange);
     };
-  }, [token, user?.id, selectedChat?.id]);
+  }, [token, user?.id, selectedChat?.id, isChatVisible]);
 
   const openFriendChat = (friend) => {
     if (user?.id && unreadCountsRef.current[friend.id]) {
