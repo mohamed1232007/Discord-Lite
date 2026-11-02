@@ -76,6 +76,7 @@ export default function CallScreen({ onOpenChat }) {
     isDeafened,
     isVideoEnabled,
     isScreenSharing,
+    isNativeScreenSharing,
     isRemoteScreenSharing,
     isRemoteCamera,
     localVideoRef,
@@ -153,12 +154,14 @@ export default function CallScreen({ onOpenChat }) {
       if (isScreenSharing && screenStreamRef.current) {
         localVideoRef.current.srcObject = screenStreamRef.current;
         localVideoRef.current.play().catch(() => {});
+      } else if (isScreenSharing && isNativeScreenSharing) {
+        localVideoRef.current.srcObject = null;
       } else if (isVideoEnabled && localStreamRef.current) {
         localVideoRef.current.srcObject = localStreamRef.current;
         localVideoRef.current.play().catch(() => {});
       }
     }
-  }, [isScreenSharing, isVideoEnabled, localVideoRef, screenStreamRef, localStreamRef]);
+  }, [isScreenSharing, isNativeScreenSharing, isVideoEnabled, localVideoRef, screenStreamRef, localStreamRef]);
 
   // توصيل البث الوارد تلقائياً
   useEffect(() => {
@@ -662,13 +665,21 @@ export default function CallScreen({ onOpenChat }) {
               </div>
             ) : (
               <div className="w-full h-full relative flex items-center justify-center">
-                <video
-                  ref={localVideoRef}
-                  autoPlay
-                  muted
-                  playsInline
-                  className="w-full h-full object-contain bg-black"
-                />
+                {isNativeScreenSharing ? (
+                  <div className="flex h-full w-full flex-col items-center justify-center gap-3 bg-[#111214] text-center text-[#b5bac1]">
+                    <Monitor size={40} className="text-[#23a55a]" />
+                    <span className="text-sm font-semibold text-white">Screen sharing is active</span>
+                    <span className="text-xs">Your screen is being sent directly to the call.</span>
+                  </div>
+                ) : (
+                  <video
+                    ref={localVideoRef}
+                    autoPlay
+                    muted
+                    playsInline
+                    className="w-full h-full object-contain bg-black"
+                  />
+                )}
                 {/* شارة الشير سكرين الخاصة بك */}
                 <div className="absolute top-4 left-4 bg-[#23a55a] text-white text-xs px-3 py-1.5 rounded-lg font-bold flex items-center gap-2 shadow-lg z-10 backdrop-blur-sm">
                   <Monitor size={15} />
@@ -690,13 +701,20 @@ export default function CallScreen({ onOpenChat }) {
                 // أنت في الـ PIP لأن الطرف الثاني هو اللي فاتح شير
                 <div className="w-full h-full relative flex items-center justify-center">
                   {isScreenSharing ? (
-                    <video
-                      ref={(element) => setVideoStream(element, screenStreamRef.current)}
-                      autoPlay
-                      muted
-                      playsInline
-                      className="w-full h-full object-cover"
-                    />
+                    isNativeScreenSharing ? (
+                      <div className="flex h-full w-full flex-col items-center justify-center gap-2 text-[#b5bac1]">
+                        <Monitor size={24} className="text-[#23a55a]" />
+                        <span className="text-[11px]">Sharing screen</span>
+                      </div>
+                    ) : (
+                      <video
+                        ref={(element) => setVideoStream(element, screenStreamRef.current)}
+                        autoPlay
+                        muted
+                        playsInline
+                        className="w-full h-full object-cover"
+                      />
+                    )
                   ) : isVideoEnabled ? (
                     <video
                       ref={(element) => setVideoStream(element, localStreamRef.current)}

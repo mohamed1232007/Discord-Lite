@@ -1,12 +1,57 @@
 use tauri::Manager;
 
+#[cfg(windows)]
+mod native_share;
+
+#[cfg(not(windows))]
+mod native_share {
+    use tauri::{AppHandle, State};
+
+    #[derive(Default)]
+    pub struct NativeShareState;
+
+    #[tauri::command]
+    pub fn list_screen_share_sources(
+        _state: State<'_, NativeShareState>,
+    ) -> Result<Vec<serde_json::Value>, String> {
+        Err("Native screen sharing is only available in the Windows desktop app.".to_owned())
+    }
+
+    #[tauri::command]
+    pub async fn start_native_screen_share(
+        _app: AppHandle,
+        _state: State<'_, NativeShareState>,
+        _source_id: String,
+        _server_url: String,
+        _token: String,
+        _quality: String,
+        _frame_rate: u32,
+        _include_system_audio: bool,
+    ) -> Result<(), String> {
+        Err("Native screen sharing is only available in the Windows desktop app.".to_owned())
+    }
+
+    #[tauri::command]
+    pub async fn stop_native_screen_share(
+        _state: State<'_, NativeShareState>,
+    ) -> Result<(), String> {
+        Err("Native screen sharing is only available in the Windows desktop app.".to_owned())
+    }
+}
+
 pub fn run() {
     tauri::Builder::default()
+        .manage(native_share::NativeShareState::default())
         .plugin(tauri_plugin_single_instance::init(|app, _argv, _cwd| {
             show_main_window(app);
         }))
         .plugin(tauri_plugin_process::init())
         .plugin(tauri_plugin_updater::Builder::new().build())
+        .invoke_handler(tauri::generate_handler![
+            native_share::list_screen_share_sources,
+            native_share::start_native_screen_share,
+            native_share::stop_native_screen_share
+        ])
         .on_window_event(|window, event| {
             if let tauri::WindowEvent::CloseRequested { api, .. } = event {
                 api.prevent_close();
