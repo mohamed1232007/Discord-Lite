@@ -77,6 +77,7 @@ export default function CallScreen({ onOpenChat }) {
     isVideoEnabled,
     isScreenSharing,
     isNativeScreenSharing,
+    nativeScreenSharePreview,
     isRemoteScreenSharing,
     isRemoteCamera,
     localVideoRef,
@@ -176,14 +177,13 @@ export default function CallScreen({ onOpenChat }) {
   useEffect(() => {
     const activeParticipantIds = new Set(remoteStreams.map(({ userId }) => userId));
 
-    remoteStreams.forEach(({ userId, stream }) => {
+    remoteStreams.forEach(({ userId, microphoneTrack, screenAudioTrack }) => {
       const participantSettings = participantAudioSettings[userId];
       const streamSettings = streamAudioSettings[userId];
-      const [voiceTrack, screenAudioTrack] = stream.getAudioTracks();
       const audioElements = [
         {
           element: remoteAudioElementsRef.current.get(userId),
-          track: voiceTrack,
+          track: microphoneTrack,
           settings: participantSettings,
           isVoice: true,
         },
@@ -366,8 +366,8 @@ export default function CallScreen({ onOpenChat }) {
     if (element.srcObject !== stream) element.srcObject = stream;
     element.play().catch((error) => console.warn('[Video] play blocked:', error));
   };
-  const getRemoteStream = (participantId) => (
-    remoteStreams.find((entry) => entry.userId === participantId)?.stream
+  const getRemoteStream = (participantId, source = 'stream') => (
+    remoteStreams.find((entry) => entry.userId === participantId)?.[source]
   );
   const renderParticipantMenu = (participant, participantName) => {
     if (participant.user_id === currentUser?.id) return null;
@@ -587,7 +587,8 @@ export default function CallScreen({ onOpenChat }) {
                 <video
                   ref={(element) => setVideoStream(
                     element,
-                    getRemoteStream(remoteScreenParticipant?.user_id) || remoteStreamRef.current,
+                    getRemoteStream(remoteScreenParticipant?.user_id, 'screenShareStream')
+                      || remoteStreamRef.current,
                   )}
                   autoPlay
                   muted
@@ -666,11 +667,18 @@ export default function CallScreen({ onOpenChat }) {
             ) : (
               <div className="w-full h-full relative flex items-center justify-center">
                 {isNativeScreenSharing ? (
-                  <div className="flex h-full w-full flex-col items-center justify-center gap-3 bg-[#111214] text-center text-[#b5bac1]">
-                    <Monitor size={40} className="text-[#23a55a]" />
-                    <span className="text-sm font-semibold text-white">Screen sharing is active</span>
-                    <span className="text-xs">Your screen is being sent directly to the call.</span>
-                  </div>
+                  nativeScreenSharePreview ? (
+                    <img
+                      src={nativeScreenSharePreview}
+                      alt="Preview of your shared screen"
+                      className="h-full w-full bg-black object-contain"
+                    />
+                  ) : (
+                    <div className="flex h-full w-full flex-col items-center justify-center gap-3 bg-[#111214] text-center text-[#b5bac1]">
+                      <Monitor size={40} className="text-[#23a55a]" />
+                      <span className="text-sm font-semibold text-white">Connecting screen preview…</span>
+                    </div>
+                  )
                 ) : (
                   <video
                     ref={localVideoRef}
@@ -702,10 +710,18 @@ export default function CallScreen({ onOpenChat }) {
                 <div className="w-full h-full relative flex items-center justify-center">
                   {isScreenSharing ? (
                     isNativeScreenSharing ? (
-                      <div className="flex h-full w-full flex-col items-center justify-center gap-2 text-[#b5bac1]">
-                        <Monitor size={24} className="text-[#23a55a]" />
-                        <span className="text-[11px]">Sharing screen</span>
-                      </div>
+                      nativeScreenSharePreview ? (
+                        <img
+                          src={nativeScreenSharePreview}
+                          alt="Preview of your shared screen"
+                          className="h-full w-full object-cover"
+                        />
+                      ) : (
+                        <div className="flex h-full w-full flex-col items-center justify-center gap-2 text-[#b5bac1]">
+                          <Monitor size={24} className="text-[#23a55a]" />
+                          <span className="text-[11px]">Connecting preview…</span>
+                        </div>
+                      )
                     ) : (
                       <video
                         ref={(element) => setVideoStream(element, screenStreamRef.current)}
@@ -748,7 +764,7 @@ export default function CallScreen({ onOpenChat }) {
                     <video
                       ref={(element) => setVideoStream(
                         element,
-                        getRemoteStream(remoteCameraParticipants[0].user_id),
+                        getRemoteStream(remoteCameraParticipants[0].user_id, 'cameraStream'),
                       )}
                       autoPlay
                       muted
@@ -785,7 +801,9 @@ export default function CallScreen({ onOpenChat }) {
                 ? `${myName} (You)`
                 : participantUser.display_name || participantUser.username || 'Friend';
               const state = getParticipantState(participant);
-              const remoteVideoStream = isLocal ? null : getRemoteStream(participant.user_id);
+              const remoteVideoStream = isLocal
+                ? null
+                : getRemoteStream(participant.user_id, 'cameraStream');
               const cameraVisible = !!state.camera && (isLocal || !!remoteVideoStream);
               return (
                 <div key={participant.user_id} className="group relative aspect-video w-full max-w-[420px] overflow-hidden rounded-xl border border-[#1e1f22] bg-[#09080c] shadow-2xl transition-all hover:border-[#2b2d31]">

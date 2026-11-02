@@ -6,7 +6,7 @@ use std::{
         mpsc,
     },
     thread::{self, JoinHandle},
-    time::Duration,
+    time::{Duration, Instant},
 };
 
 use base64::{Engine as _, engine::general_purpose::STANDARD as BASE64};
@@ -53,6 +53,13 @@ pub struct ShareSource {
     height: u32,
 }
 
+#[derive(Clone, Serialize)]
+#[serde(rename_all = "camelCase")]
+struct NativeSharePreview {
+    source_id: String,
+    data_url: String,
+}
+
 #[derive(Clone)]
 struct CaptureFlags {
     width: u32,
@@ -65,6 +72,7 @@ struct CaptureFlags {
 
 struct ScreenCapture {
     flags: CaptureFlags,
+    last_preview_at: Option<Instant>,
 }
 
 #[derive(Clone, Copy)]
@@ -95,6 +103,7 @@ impl GraphicsCaptureApiHandler for ScreenCapture {
     fn new(context: Context<Self::Flags>) -> Result<Self, Self::Error> {
         Ok(Self {
             flags: context.flags,
+            last_preview_at: None,
         })
     }
 
@@ -122,6 +131,26 @@ impl GraphicsCaptureApiHandler for ScreenCapture {
             )?;
             let video_frame = VideoFrame::new(VideoRotation::VideoRotation0, i420);
             self.flags.video_source.capture_frame(&video_frame);
+            if self
+                .last_preview_at
+                .is_none_or(|last| last.elapsed() >= Duration::from_millis(500))
+            {
+                self.last_preview_at = Some(Instant::now());
+                match encode_bgra_preview(&bgra, frame_width, frame_height) {
+                    Ok(data_url) => {
+                        let _ = self.flags.app.emit(
+                            "native-screen-share-preview",
+                            NativeSharePreview {
+                                source_id: self.flags.source_id.clone(),
+                                data_url,
+                            },
+                        );
+                    }
+                    Err(error) => {
+                        log::warn!("Could not encode the local screen-share preview: {error}");
+                    }
+                }
+            }
             Ok(())
         })();
         if let Err(error) = &result {
@@ -143,6 +172,37 @@ impl GraphicsCaptureApiHandler for ScreenCapture {
             .emit("native-screen-share-ended", &self.flags.source_id);
         Ok(())
     }
+}
+
+fn encode_bgra_preview(bgra: &[u8], frame_width: u32, frame_height: u32) -> Result<String, String> {
+    if frame_width == 0 || frame_height == 0 {
+        return Err("The selected source returned an empty preview.".to_owned());
+    }
+    let required = frame_width as usize * frame_height as usize * 4;
+    if bgra.len() < required {
+        return Err("Windows returned an incomplete source preview.".to_owned());
+    }
+    let scale = (480.0 / frame_width as f64)
+        .min(270.0 / frame_height as f64)
+        .min(1.0);
+    let width = ((frame_width as f64 * scale).round() as u32).max(2);
+    let height = ((frame_height as f64 * scale).round() as u32).max(2);
+    let mut thumbnail = vec![0_u8; width as usize * height as usize * 4];
+    for y in 0..height {
+        for x in 0..width {
+            let source_x = (x as u64 * frame_width as u64 / width as u64) as u32;
+            let source_y = (y as u64 * frame_height as u64 / height as u64) as u32;
+            let source_offset = ((source_y * frame_width + source_x) as usize).saturating_mul(4);
+            let target_offset = ((y * width + x) as usize).saturating_mul(4);
+            thumbnail[target_offset..target_offset + 4]
+                .copy_from_slice(&bgra[source_offset..source_offset + 4]);
+        }
+    }
+    let jpeg = ImageEncoder::new(ImageFormat::Jpeg, ImageEncoderPixelFormat::Bgra8)
+        .map_err(|error| error.to_string())?
+        .encode(&thumbnail, width, height)
+        .map_err(|error| error.to_string())?;
+    Ok(format!("data:image/jpeg;base64,{}", BASE64.encode(jpeg)))
 }
 
 struct NativeShareSession {
@@ -192,28 +252,7 @@ impl GraphicsCaptureApiHandler for PreviewCapture {
             if bgra.len() < required {
                 return Err("Windows returned an incomplete source preview.".to_owned());
             }
-            let scale = (480.0 / frame_width as f64)
-                .min(270.0 / frame_height as f64)
-                .min(1.0);
-            let width = ((frame_width as f64 * scale).round() as u32).max(2);
-            let height = ((frame_height as f64 * scale).round() as u32).max(2);
-            let mut thumbnail = vec![0_u8; width as usize * height as usize * 4];
-            for y in 0..height {
-                for x in 0..width {
-                    let source_x = (x as u64 * frame_width as u64 / width as u64) as u32;
-                    let source_y = (y as u64 * frame_height as u64 / height as u64) as u32;
-                    let source_offset =
-                        ((source_y * frame_width + source_x) as usize).saturating_mul(4);
-                    let target_offset = ((y * width + x) as usize).saturating_mul(4);
-                    thumbnail[target_offset..target_offset + 4]
-                        .copy_from_slice(&bgra[source_offset..source_offset + 4]);
-                }
-            }
-            let jpeg = ImageEncoder::new(ImageFormat::Jpeg, ImageEncoderPixelFormat::Bgra8)
-                .map_err(|error| error.to_string())?
-                .encode(&thumbnail, width, height)
-                .map_err(|error| error.to_string())?;
-            Ok(format!("data:image/jpeg;base64,{}", BASE64.encode(jpeg)))
+            encode_bgra_preview(&bgra, frame_width, frame_height)
         })();
 
         if let Some(sender) = self.result_sender.take() {
