@@ -2012,29 +2012,32 @@ export const VoiceProvider = ({ children }) => {
     }
     let stream = null;
     try {
-      const resolutionHeight = Number(shareOptions.quality) || 1080;
-      const resolutionWidth = Math.round(resolutionHeight * (16 / 9));
+      const qualityPresets = {
+        480: { width: 854, height: 480, maxBitrate: 1_500_000 },
+        720: { width: 1280, height: 720, maxBitrate: 3_000_000 },
+        1080: { width: 1920, height: 1080, maxBitrate: 5_000_000 },
+      };
+      const preset = qualityPresets[shareOptions.quality] || qualityPresets[720];
+      const frameRate = shareOptions.frameRate || 30;
+      const includeSystemAudio = shareOptions.includeSystemAudio !== false;
       stream = await navigator.mediaDevices.getDisplayMedia({
         video: {
           displaySurface: { ideal: displaySurface },
-          width: { ideal: resolutionWidth },
-          height: { ideal: resolutionHeight },
-          frameRate: { ideal: shareOptions.frameRate || 30 },
+          width: { ideal: preset.width, max: preset.width },
+          height: { ideal: preset.height, max: preset.height },
+          frameRate: { ideal: frameRate, max: frameRate },
         },
-        audio: true,
-        systemAudio: 'include',
+        audio: includeSystemAudio,
+        systemAudio: includeSystemAudio ? 'include' : 'exclude',
       });
       const screenTrack = stream.getVideoTracks()[0];
       if (!screenTrack) throw new Error('Screen capture did not provide a video track.');
-      const actualSettings = screenTrack.getSettings();
-      const actualHeight = actualSettings.height || resolutionHeight;
-      const maxBitrate = actualHeight >= 1080 ? 5_000_000 : actualHeight >= 720 ? 3_000_000 : 1_500_000;
       screenTrack.contentHint = 'detail';
       screenStreamRef.current = stream;
       await publishLiveKitTrack(screenTrack, 'screen', Track.Source.ScreenShare, {
         screenShareEncoding: {
-          maxBitrate,
-          maxFramerate: shareOptions.frameRate || 30,
+          maxBitrate: preset.maxBitrate,
+          maxFramerate: frameRate,
         },
         degradationPreference: 'maintain-resolution',
       });

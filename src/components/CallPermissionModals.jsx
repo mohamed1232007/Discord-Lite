@@ -93,7 +93,11 @@ export function ScreenSharePicker({
       return;
     }
     if (!isNativePicker) {
-      onSelect(selectedSourceId === 'monitor' ? 'monitor' : 'window');
+      onSelect(selectedSourceId === 'monitor' ? 'monitor' : 'window', {
+        quality,
+        frameRate,
+        includeSystemAudio,
+      });
       return;
     }
     if (!selectedSource) return;
@@ -264,7 +268,7 @@ export function ScreenSharePicker({
 
         <footer className="flex flex-wrap items-center justify-between gap-4 border-t border-[#2b2d31] px-6 py-4">
           <div className="flex items-center gap-3">
-            {isNativePicker && activeTab !== 'devices' && (
+            {activeTab !== 'devices' && (
               <>
                 <span className="text-xs font-semibold uppercase tracking-wide text-[#949ba4]">Quality</span>
                 <div className="flex rounded-lg bg-[#111214] p-1">
@@ -306,6 +310,20 @@ export function ScreenSharePicker({
                   </label>
                 )}
               </>
+            )}
+            {!isNativePicker && activeTab !== 'devices' && (
+              <button
+                type="button"
+                role="switch"
+                aria-checked={includeSystemAudio}
+                onClick={() => setIncludeSystemAudio((enabled) => !enabled)}
+                className={`flex items-center gap-2 rounded-lg px-3 py-2 text-xs font-semibold transition ${
+                  includeSystemAudio ? 'bg-[#23a55a]/15 text-[#57f287]' : 'bg-[#2b2d31] text-[#b5bac1]'
+                }`}
+              >
+                <Volume2 size={15} />
+                {includeSystemAudio ? 'Audio on' : 'Audio off'}
+              </button>
             )}
             {isNativePicker && activeTab === 'devices' && (
               <button
