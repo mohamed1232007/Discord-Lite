@@ -55,10 +55,12 @@ export function ScreenSharePicker({
   sourcesLoading = false,
   sourcesError = '',
   onRefreshSources,
+  onLoadPreview,
+  nativeSharePreviews = {},
 }) {
   const [activeTab, setActiveTab] = useState('applications');
   const [selectedSourceId, setSelectedSourceId] = useState('window');
-  const [quality, setQuality] = useState('hd');
+  const [quality, setQuality] = useState('720');
   const [frameRate, setFrameRate] = useState(30);
   const [includeSystemAudio, setIncludeSystemAudio] = useState(true);
   const [showSettings, setShowSettings] = useState(false);
@@ -170,6 +172,17 @@ export function ScreenSharePicker({
                 {visibleSources.map((source) => {
                   const Icon = source.kind === 'monitor' ? Monitor : AppWindow;
                   const isSelected = (selectedSource?.id || selectedSourceId) === source.id;
+                  const preview = nativeSharePreviews[source.id];
+                  const previewRef = (element) => {
+                    if (!element || preview || !onLoadPreview) return;
+                    const observer = new IntersectionObserver((entries) => {
+                      if (entries.some((entry) => entry.isIntersecting)) {
+                        observer.disconnect();
+                        onLoadPreview(source.id);
+                      }
+                    }, { rootMargin: '120px' });
+                    observer.observe(element);
+                  };
                   return (
                     <button
                       key={source.id}
@@ -183,11 +196,21 @@ export function ScreenSharePicker({
                       }`}
                       aria-pressed={isSelected}
                     >
-                      <div className="relative flex aspect-video items-center justify-center overflow-hidden bg-[#101114]">
-                        <div className="absolute inset-0 bg-[radial-gradient(ellipse_at_center,_var(--tw-gradient-stops))] from-[#34364a] via-[#191a20] to-[#101114]" />
-                        <div className="relative flex h-16 w-16 items-center justify-center rounded-2xl border border-white/10 bg-black/30 text-[#aeb8ff]">
-                          <Icon size={30} />
-                        </div>
+                      <div ref={previewRef} className="relative flex aspect-video items-center justify-center overflow-hidden bg-[#101114]">
+                        {preview ? (
+                          <img
+                            src={preview}
+                            alt={`Preview of ${source.name}`}
+                            className="absolute inset-0 h-full w-full object-contain"
+                          />
+                        ) : (
+                          <>
+                            <div className="absolute inset-0 bg-[radial-gradient(ellipse_at_center,_var(--tw-gradient-stops))] from-[#34364a] via-[#191a20] to-[#101114]" />
+                            <div className="relative flex h-16 w-16 items-center justify-center rounded-2xl border border-white/10 bg-black/30 text-[#aeb8ff]">
+                              <Icon size={30} />
+                            </div>
+                          </>
+                        )}
                         {isSelected && (
                           <span className="absolute right-3 top-3 flex h-6 w-6 items-center justify-center rounded-full bg-[#5865f2]">
                             <Check size={15} />
@@ -245,17 +268,17 @@ export function ScreenSharePicker({
               <>
                 <span className="text-xs font-semibold uppercase tracking-wide text-[#949ba4]">Quality</span>
                 <div className="flex rounded-lg bg-[#111214] p-1">
-                  {['sd', 'hd'].map((preset) => (
+                  {['480', '720', '1080'].map((preset) => (
                     <button
                       key={preset}
                       type="button"
                       onClick={() => setQuality(preset)}
-                      className={`rounded-md px-3 py-1.5 text-xs font-bold uppercase ${
+                      className={`rounded-md px-3 py-1.5 text-xs font-bold ${
                         quality === preset ? 'bg-[#353740] text-white' : 'text-[#949ba4] hover:text-white'
                       }`}
                       aria-pressed={quality === preset}
                     >
-                      {preset}
+                      {preset}p
                     </button>
                   ))}
                 </div>

@@ -9,6 +9,7 @@ use std::{
     time::Duration,
 };
 
+use base64::{Engine as _, engine::general_purpose::STANDARD as BASE64};
 use livekit::{
     options::{DegradationPreference, TrackPublishOptions, VideoEncoding},
     prelude::*,
@@ -24,6 +25,7 @@ use tauri::{AppHandle, Emitter, State};
 use tokio::runtime::Handle;
 use windows_capture::{
     capture::{CaptureControl, Context, GraphicsCaptureApiHandler},
+    encoder::{ImageEncoder, ImageEncoderPixelFormat, ImageFormat},
     frame::Frame,
     graphics_capture_api::InternalCaptureControl,
     monitor::Monitor,
@@ -65,6 +67,7 @@ struct ScreenCapture {
     flags: CaptureFlags,
 }
 
+#[derive(Clone, Copy)]
 enum CaptureSource {
     Monitor(Monitor),
     Window(Window),
@@ -149,10 +152,85 @@ struct NativeShareSession {
     audio_thread: Option<JoinHandle<()>>,
 }
 
+#[derive(Clone, Copy)]
 struct SelectedSource {
     capture: CaptureSource,
     width: u32,
     height: u32,
+}
+
+struct PreviewCapture {
+    result_sender: Option<mpsc::SyncSender<Result<String, String>>>,
+}
+
+impl GraphicsCaptureApiHandler for PreviewCapture {
+    type Flags = mpsc::SyncSender<Result<String, String>>;
+    type Error = String;
+
+    fn new(context: Context<Self::Flags>) -> Result<Self, Self::Error> {
+        Ok(Self {
+            result_sender: Some(context.flags),
+        })
+    }
+
+    fn on_frame_arrived(
+        &mut self,
+        frame: &mut Frame,
+        capture_control: InternalCaptureControl,
+    ) -> Result<(), Self::Error> {
+        let result = (|| {
+            let frame_width = frame.width();
+            let frame_height = frame.height();
+            if frame_width == 0 || frame_height == 0 {
+                return Err("The selected source returned an empty preview.".to_owned());
+            }
+
+            let frame_buffer = frame.buffer().map_err(|error| error.to_string())?;
+            let mut scratch = Vec::new();
+            let bgra = frame_buffer.as_nopadding_buffer(&mut scratch);
+            let required = frame_width as usize * frame_height as usize * 4;
+            if bgra.len() < required {
+                return Err("Windows returned an incomplete source preview.".to_owned());
+            }
+            let scale = (480.0 / frame_width as f64)
+                .min(270.0 / frame_height as f64)
+                .min(1.0);
+            let width = ((frame_width as f64 * scale).round() as u32).max(2);
+            let height = ((frame_height as f64 * scale).round() as u32).max(2);
+            let mut thumbnail = vec![0_u8; width as usize * height as usize * 4];
+            for y in 0..height {
+                for x in 0..width {
+                    let source_x = (x as u64 * frame_width as u64 / width as u64) as u32;
+                    let source_y = (y as u64 * frame_height as u64 / height as u64) as u32;
+                    let source_offset =
+                        ((source_y * frame_width + source_x) as usize).saturating_mul(4);
+                    let target_offset = ((y * width + x) as usize).saturating_mul(4);
+                    thumbnail[target_offset..target_offset + 4]
+                        .copy_from_slice(&bgra[source_offset..source_offset + 4]);
+                }
+            }
+            let jpeg = ImageEncoder::new(ImageFormat::Jpeg, ImageEncoderPixelFormat::Bgra8)
+                .map_err(|error| error.to_string())?
+                .encode(&thumbnail, width, height)
+                .map_err(|error| error.to_string())?;
+            Ok(format!("data:image/jpeg;base64,{}", BASE64.encode(jpeg)))
+        })();
+
+        if let Some(sender) = self.result_sender.take() {
+            let _ = sender.send(result);
+        }
+        capture_control.stop();
+        Ok(())
+    }
+
+    fn on_closed(&mut self) -> Result<(), Self::Error> {
+        if let Some(sender) = self.result_sender.take() {
+            let _ = sender.send(Err(
+                "The selected source closed before its preview was ready.".to_owned(),
+            ));
+        }
+        Ok(())
+    }
 }
 
 pub struct NativeShareState {
@@ -254,6 +332,59 @@ pub fn list_screen_share_sources(
 }
 
 #[tauri::command]
+pub async fn get_screen_share_source_preview(
+    state: State<'_, NativeShareState>,
+    source_id: String,
+) -> Result<String, String> {
+    let source = state
+        .sources
+        .lock()
+        .map_err(|_| "The screen-source list is unavailable.".to_owned())?
+        .get(&source_id)
+        .copied()
+        .ok_or_else(|| {
+            "The selected screen source is no longer available. Refresh the list and try again."
+                .to_owned()
+        })?
+        .capture;
+
+    tauri::async_runtime::spawn_blocking(move || capture_source_preview(source))
+        .await
+        .map_err(|error| format!("The screen preview task failed: {error}"))?
+}
+
+fn capture_source_preview(source: CaptureSource) -> Result<String, String> {
+    let (result_sender, result_receiver) = mpsc::sync_channel(1);
+    let settings = Settings::new(
+        source,
+        CursorCaptureSettings::WithoutCursor,
+        DrawBorderSettings::WithoutBorder,
+        SecondaryWindowSettings::Default,
+        MinimumUpdateIntervalSettings::Custom(Duration::from_millis(100)),
+        DirtyRegionSettings::Default,
+        ColorFormat::Bgra8,
+        result_sender,
+    );
+    let capture = PreviewCapture::start_free_threaded(settings)
+        .map_err(|error| format!("Could not capture the selected source preview: {error}"))?;
+
+    match result_receiver.recv_timeout(Duration::from_secs(3)) {
+        Ok(result) => {
+            capture
+                .wait()
+                .map_err(|error| format!("Could not finish the source preview capture: {error}"))?;
+            result
+        }
+        Err(error) => {
+            capture.stop().map_err(|stop_error| {
+                format!("Preview timed out ({error}) and cleanup failed: {stop_error}")
+            })?;
+            Err(format!("The selected source preview timed out: {error}"))
+        }
+    }
+}
+
+#[tauri::command]
 pub async fn start_native_screen_share(
     app: AppHandle,
     state: State<'_, NativeShareState>,
@@ -263,14 +394,20 @@ pub async fn start_native_screen_share(
     quality: String,
     frame_rate: u32,
     include_system_audio: bool,
-) -> Result<(), String> {
+) -> Result<bool, String> {
     if source_id.len() > 64 || !source_id.starts_with(SCREEN_ID_PREFIX) {
         return Err("The selected screen source is invalid.".to_owned());
     }
     if server_url.len() > 2048 || token.len() > 8192 {
         return Err("The LiveKit connection details are invalid.".to_owned());
     }
-    if !matches!(quality.as_str(), "sd" | "hd") || !matches!(frame_rate, 15 | 30 | 60) {
+    let (max_width, max_height, max_bitrate) = match quality.as_str() {
+        "480" => (854, 480, 1_500_000),
+        "720" => (1280, 720, 3_000_000),
+        "1080" => (1920, 1080, 5_000_000),
+        _ => return Err("Choose a supported screen-share resolution.".to_owned()),
+    };
+    if !matches!(frame_rate, 15 | 30 | 60) {
         return Err("The screen-share quality settings are invalid.".to_owned());
     }
     {
@@ -299,11 +436,6 @@ pub async fn start_native_screen_share(
     );
     let source_width = source_width.max(2);
     let source_height = source_height.max(2);
-    let (max_width, max_height, max_bitrate) = if quality == "sd" {
-        (1280, 720, 2_000_000)
-    } else {
-        (3840, 2160, 6_000_000)
-    };
     let scale = (max_width as f64 / source_width as f64)
         .min(max_height as f64 / source_height as f64)
         .min(1.0);
@@ -348,7 +480,25 @@ pub async fn start_native_screen_share(
         return Err(format!("Could not publish the screen video track: {error}"));
     }
 
-    if let Some(audio_source) = audio_source.as_ref() {
+    let mut audio_thread = if let Some(audio_source) = audio_source.as_ref() {
+        match start_loopback_capture(
+            audio_source.clone(),
+            stop_audio.clone(),
+            Handle::current(),
+            app.clone(),
+            source_id.clone(),
+        ) {
+            Ok(thread) => Some(thread),
+            Err(error) => {
+                log::warn!("System audio is unavailable; continuing with screen video: {error}");
+                None
+            }
+        }
+    } else {
+        None
+    };
+
+    if let (Some(audio_source), Some(_)) = (audio_source.as_ref(), audio_thread.as_ref()) {
         let audio_track = LocalAudioTrack::create_audio_track(
             "screen-audio",
             RtcAudioSource::Native(audio_source.clone()),
@@ -362,30 +512,13 @@ pub async fn start_native_screen_share(
             .publish_track(LocalTrack::Audio(audio_track), audio_options)
             .await
         {
-            let _ = room.close().await;
-            return Err(format!("Could not publish system audio: {error}"));
-        }
-    }
-
-    let audio_thread = if let Some(audio_source) = audio_source {
-        match start_loopback_capture(
-            audio_source,
-            stop_audio.clone(),
-            Handle::current(),
-            app.clone(),
-            source_id.clone(),
-        ) {
-            Ok(thread) => Some(thread),
-            Err(error) => {
-                let _ = room.close().await;
-                return Err(format!(
-                    "Could not start Windows system-audio capture: {error}"
-                ));
+            log::warn!("Could not publish system audio; continuing with screen video: {error}");
+            stop_audio.store(true, Ordering::Release);
+            if let Some(audio_thread) = audio_thread.take() {
+                let _ = tauri::async_runtime::spawn_blocking(move || audio_thread.join()).await;
             }
         }
-    } else {
-        None
-    };
+    }
 
     let flags = CaptureFlags {
         width,
@@ -426,6 +559,7 @@ pub async fn start_native_screen_share(
         }
     });
 
+    let has_system_audio = audio_thread.is_some();
     let mut pending_session = Some(NativeShareSession {
         room,
         capture: Some(capture),
@@ -458,7 +592,7 @@ pub async fn start_native_screen_share(
         let _ = session.room.close().await;
         return Err("Screen sharing was started elsewhere.".to_owned());
     }
-    Ok(())
+    Ok(has_system_audio)
 }
 
 #[tauri::command]
@@ -531,13 +665,43 @@ fn bgra_to_i420(
     let (y_plane, u_plane, v_plane) = output.data_mut();
 
     let source_pixel = |x: u32, y: u32| -> (f32, f32, f32) {
-        let source_x = (x as u64 * input_width as u64 / width as u64) as u32;
-        let source_y = (y as u64 * input_height as u64 / height as u64) as u32;
-        let offset = ((source_y.min(input_height - 1) * input_width)
-            + source_x.min(input_width - 1)) as usize
-            * 4;
-        let pixel = &bgra[offset..offset + 4];
-        (pixel[2] as f32, pixel[1] as f32, pixel[0] as f32)
+        let source_x = x as f64 * (input_width.saturating_sub(1)) as f64
+            / width.saturating_sub(1).max(1) as f64;
+        let source_y = y as f64 * (input_height.saturating_sub(1)) as f64
+            / height.saturating_sub(1).max(1) as f64;
+        let left = source_x.floor() as u32;
+        let top = source_y.floor() as u32;
+        let right = (left + 1).min(input_width - 1);
+        let bottom = (top + 1).min(input_height - 1);
+        let x_blend = (source_x - left as f64) as f32;
+        let y_blend = (source_y - top as f64) as f32;
+        let sample = |sample_x: u32, sample_y: u32| {
+            let offset = ((sample_y * input_width) + sample_x) as usize * 4;
+            let pixel = &bgra[offset..offset + 4];
+            (pixel[2] as f32, pixel[1] as f32, pixel[0] as f32)
+        };
+        let top_left = sample(left, top);
+        let top_right = sample(right, top);
+        let bottom_left = sample(left, bottom);
+        let bottom_right = sample(right, bottom);
+        let blend = |a: f32, b: f32, amount: f32| a + (b - a) * amount;
+        (
+            blend(
+                blend(top_left.0, top_right.0, x_blend),
+                blend(bottom_left.0, bottom_right.0, x_blend),
+                y_blend,
+            ),
+            blend(
+                blend(top_left.1, top_right.1, x_blend),
+                blend(bottom_left.1, bottom_right.1, x_blend),
+                y_blend,
+            ),
+            blend(
+                blend(top_left.2, top_right.2, x_blend),
+                blend(bottom_left.2, bottom_right.2, x_blend),
+                y_blend,
+            ),
+        )
     };
 
     for row in 0..height {
@@ -703,7 +867,7 @@ fn start_loopback_capture(
                 if let Err(error) = packet_result {
                     log::error!("System-audio capture stopped: {error}");
                     stop.store(true, Ordering::Release);
-                    let _ = app.emit("native-screen-share-ended", &source_id);
+                    let _ = app.emit("native-screen-share-audio-ended", &source_id);
                     break;
                 }
                 if event.wait_for_event(200_000).is_err() {
