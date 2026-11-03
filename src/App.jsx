@@ -37,11 +37,8 @@ function ScreenFallback() {
 function MainApp() {
   const { user, loading } = useAuth();
   const { activeCall } = useVoice();
-  // شاشة التحديث تظهر فقط داخل تطبيق الويندوز (Tauri)، ولا تظهر لزوار الموقع في المتصفح
+  // فحص التحديثات يعمل داخل Tauri فقط، ولا يتداخل مع نسخة المتصفح
   const isTauriApp = typeof window !== 'undefined' && Boolean(window.__TAURI_INTERNALS__ || window.__TAURI__);
-  const [updaterFinished, setUpdaterFinished] = useState(!isTauriApp);
-  const finishUpdater = useCallback(() => setUpdaterFinished(true), []);
-
   // الصفحة المطلوبة من المستخدم (landing / login / app) مع حفظها للزيارة القادمة
   const [requestedView, setRequestedView] = useState(() => {
     const token = localStorage.getItem('dis_lite_token');
@@ -87,10 +84,6 @@ function MainApp() {
     setSelectedChat(chat);
     setIsChatVisible(!!chat);
   }, []);
-
-  if (!updaterFinished) {
-    return <DiscordUpdater onFinished={finishUpdater} />;
-  }
 
   if (loading) {
     return (
@@ -204,6 +197,7 @@ export default function App() {
     <ToastProvider>
       <AuthProvider>
         <VoiceProvider>
+          <DiscordUpdater />
           <MainApp />
         </VoiceProvider>
       </AuthProvider>
