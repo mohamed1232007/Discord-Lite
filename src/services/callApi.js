@@ -1,4 +1,4 @@
-const BACKEND_URL = import.meta.env.VITE_BACKEND_URL || 'http://localhost:5000/api';
+import { BACKEND_URL } from './backendUrl';
 
 export const callApi = async (token, path, { body, ...options } = {}) => {
   const response = await fetch(`${BACKEND_URL}/calls${path}`, {

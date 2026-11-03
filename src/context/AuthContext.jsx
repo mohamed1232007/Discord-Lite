@@ -1,9 +1,8 @@
 import { createContext, useContext, useEffect, useState } from 'react';
 import { supabase } from '../services/supabaseClient';
+import { BACKEND_URL } from '../services/backendUrl';
 
 const AuthContext = createContext({});
-
-const BACKEND_URL = import.meta.env.VITE_BACKEND_URL || 'http://localhost:5000/api';
 
 export const AuthProvider = ({ children }) => {
   const [user, setUser] = useState(null);

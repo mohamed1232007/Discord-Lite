@@ -18,9 +18,9 @@ import {
 import { useAuth } from '../context/AuthContext';
 import { useVoice } from '../context/VoiceContext';
 import { useToast } from '../context/ToastContext';
+import { BACKEND_URL } from '../services/backendUrl';
 import SettingsPage from './SettingsPage';
 
-const BACKEND_URL = import.meta.env.VITE_BACKEND_URL || 'http://localhost:5000/api';
 const UNREAD_STORAGE_KEY = 'dis_lite_unread_messages';
 const UNREAD_CURSOR_STORAGE_KEY = 'dis_lite_unread_cursor';
 

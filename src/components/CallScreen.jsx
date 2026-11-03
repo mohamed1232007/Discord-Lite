@@ -18,9 +18,8 @@ import {
 import { useVoice } from '../context/VoiceContext';
 import { useAuth } from '../context/AuthContext';
 import { useToast } from '../context/ToastContext';
+import { BACKEND_URL } from '../services/backendUrl';
 import { formatCallDuration } from '../utils/formatCallDuration';
-
-const BACKEND_URL = import.meta.env.VITE_BACKEND_URL || 'http://localhost:5000/api';
 
 const createParticipantAudioPipeline = (context, track, volume) => {
   const source = context.createMediaStreamSource(new MediaStream([track]));

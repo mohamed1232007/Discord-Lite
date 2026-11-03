@@ -11,8 +11,7 @@ import {
   Loader2
 } from 'lucide-react';
 import { useAuth } from '../context/AuthContext';
-
-const BACKEND_URL = import.meta.env.VITE_BACKEND_URL || 'http://localhost:5000/api';
+import { BACKEND_URL } from '../services/backendUrl';
 
 export default function FriendsView({ onStartChat }) {
   const { token, onlineUsers } = useAuth();

@@ -14,8 +14,8 @@ import {
 import { useAuth } from '../context/AuthContext';
 import { useVoice } from '../context/VoiceContext';
 import { useToast } from '../context/ToastContext';
+import { BACKEND_URL } from '../services/backendUrl';
 
-const BACKEND_URL = import.meta.env.VITE_BACKEND_URL || 'http://localhost:5000/api';
 const PAGE_SIZE = 100;
 
 const sortByCreatedAt = (a, b) => {
