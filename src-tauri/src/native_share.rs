@@ -39,6 +39,8 @@ use windows_capture::{
 const SCREEN_ID_PREFIX: &str = "screen:";
 const LOOPBACK_SAMPLE_RATE: u32 = 48_000;
 const LOOPBACK_CHANNELS: u32 = 2;
+const SHARE_PREVIEW_WIDTH: u32 = 960;
+const SHARE_PREVIEW_HEIGHT: u32 = 540;
 const AUDIO_FRAME_SAMPLES: usize =
     (LOOPBACK_SAMPLE_RATE as usize / 100) * LOOPBACK_CHANNELS as usize;
 static NEXT_SOURCE_ID: AtomicU64 = AtomicU64::new(1);
@@ -133,10 +135,16 @@ impl GraphicsCaptureApiHandler for ScreenCapture {
             self.flags.video_source.capture_frame(&video_frame);
             if self
                 .last_preview_at
-                .is_none_or(|last| last.elapsed() >= Duration::from_millis(500))
+                .is_none_or(|last| last.elapsed() >= Duration::from_secs(1))
             {
                 self.last_preview_at = Some(Instant::now());
-                match encode_bgra_preview(&bgra, frame_width, frame_height) {
+                match encode_bgra_preview(
+                    &bgra,
+                    frame_width,
+                    frame_height,
+                    SHARE_PREVIEW_WIDTH,
+                    SHARE_PREVIEW_HEIGHT,
+                ) {
                     Ok(data_url) => {
                         let _ = self.flags.app.emit(
                             "native-screen-share-preview",
@@ -174,7 +182,13 @@ impl GraphicsCaptureApiHandler for ScreenCapture {
     }
 }
 
-fn encode_bgra_preview(bgra: &[u8], frame_width: u32, frame_height: u32) -> Result<String, String> {
+fn encode_bgra_preview(
+    bgra: &[u8],
+    frame_width: u32,
+    frame_height: u32,
+    max_width: u32,
+    max_height: u32,
+) -> Result<String, String> {
     if frame_width == 0 || frame_height == 0 {
         return Err("The selected source returned an empty preview.".to_owned());
     }
@@ -182,8 +196,8 @@ fn encode_bgra_preview(bgra: &[u8], frame_width: u32, frame_height: u32) -> Resu
     if bgra.len() < required {
         return Err("Windows returned an incomplete source preview.".to_owned());
     }
-    let scale = (480.0 / frame_width as f64)
-        .min(270.0 / frame_height as f64)
+    let scale = (max_width as f64 / frame_width as f64)
+        .min(max_height as f64 / frame_height as f64)
         .min(1.0);
     let width = ((frame_width as f64 * scale).round() as u32).max(2);
     let height = ((frame_height as f64 * scale).round() as u32).max(2);
@@ -252,7 +266,7 @@ impl GraphicsCaptureApiHandler for PreviewCapture {
             if bgra.len() < required {
                 return Err("Windows returned an incomplete source preview.".to_owned());
             }
-            encode_bgra_preview(&bgra, frame_width, frame_height)
+            encode_bgra_preview(&bgra, frame_width, frame_height, 480, 270)
         })();
 
         if let Some(sender) = self.result_sender.take() {
@@ -441,9 +455,9 @@ pub async fn start_native_screen_share(
         return Err("The LiveKit connection details are invalid.".to_owned());
     }
     let (max_width, max_height, max_bitrate) = match quality.as_str() {
-        "480" => (854, 480, 1_500_000),
-        "720" => (1280, 720, 3_000_000),
-        "1080" => (1920, 1080, 5_000_000),
+        "480" => (854, 480, 2_500_000),
+        "720" => (1280, 720, 5_000_000),
+        "1080" => (1920, 1080, 8_000_000),
         _ => return Err("Choose a supported screen-share resolution.".to_owned()),
     };
     if !matches!(frame_rate, 15 | 30 | 60) {
@@ -519,6 +533,33 @@ pub async fn start_native_screen_share(
         return Err(format!("Could not publish the screen video track: {error}"));
     }
 
+    let flags = CaptureFlags {
+        width,
+        height,
+        video_source,
+        app: app.clone(),
+        source_id: source_id.clone(),
+        stop_audio: stop_audio.clone(),
+    };
+    let settings = Settings::new(
+        capture_item,
+        CursorCaptureSettings::WithCursor,
+        DrawBorderSettings::WithoutBorder,
+        SecondaryWindowSettings::Default,
+        MinimumUpdateIntervalSettings::Custom(Duration::from_millis(1000 / frame_rate as u64)),
+        DirtyRegionSettings::Default,
+        ColorFormat::Bgra8,
+        flags,
+    );
+    let capture = match ScreenCapture::start_free_threaded(settings) {
+        Ok(capture) => capture,
+        Err(error) => {
+            stop_audio.store(true, Ordering::Release);
+            let _ = room.close().await;
+            return Err(format!("Could not start native screen capture: {error}"));
+        }
+    };
+
     let mut audio_thread = if let Some(audio_source) = audio_source.as_ref() {
         match start_loopback_capture(
             audio_source.clone(),
@@ -558,36 +599,6 @@ pub async fn start_native_screen_share(
             }
         }
     }
-
-    let flags = CaptureFlags {
-        width,
-        height,
-        video_source,
-        app: app.clone(),
-        source_id: source_id.clone(),
-        stop_audio: stop_audio.clone(),
-    };
-    let settings = Settings::new(
-        capture_item,
-        CursorCaptureSettings::WithCursor,
-        DrawBorderSettings::WithoutBorder,
-        SecondaryWindowSettings::Default,
-        MinimumUpdateIntervalSettings::Custom(Duration::from_millis(1000 / frame_rate as u64)),
-        DirtyRegionSettings::Default,
-        ColorFormat::Bgra8,
-        flags,
-    );
-    let capture = match ScreenCapture::start_free_threaded(settings) {
-        Ok(capture) => capture,
-        Err(error) => {
-            stop_audio.store(true, Ordering::Release);
-            if let Some(audio_thread) = audio_thread {
-                let _ = audio_thread.join();
-            }
-            let _ = room.close().await;
-            return Err(format!("Could not start native screen capture: {error}"));
-        }
-    };
 
     tauri::async_runtime::spawn(async move {
         while let Some(event) = events.recv().await {
@@ -703,44 +714,90 @@ fn bgra_to_i420(
     let (y_stride, u_stride, v_stride) = output.strides();
     let (y_plane, u_plane, v_plane) = output.data_mut();
 
+    if input_width == width && input_height == height {
+        for row in 0..height {
+            let source_row = row as usize * input_width as usize * 4;
+            let target_row = row as usize * y_stride as usize;
+            for column in 0..width {
+                let source = source_row + column as usize * 4;
+                let blue = bgra[source] as f32;
+                let green = bgra[source + 1] as f32;
+                let red = bgra[source + 2] as f32;
+                y_plane[target_row + column as usize] =
+                    (16.0 + 0.257 * red + 0.504 * green + 0.098 * blue)
+                        .round()
+                        .clamp(0.0, 255.0) as u8;
+            }
+        }
+        for row in (0..height).step_by(2) {
+            for column in (0..width).step_by(2) {
+                let top_left = ((row as usize * input_width as usize) + column as usize) * 4;
+                let top_right = top_left + 4;
+                let bottom_left = top_left + input_width as usize * 4;
+                let bottom_right = bottom_left + 4;
+                let channels = [0, 1, 2].map(|channel| {
+                    (bgra[top_left + channel] as f32
+                        + bgra[top_right + channel] as f32
+                        + bgra[bottom_left + channel] as f32
+                        + bgra[bottom_right + channel] as f32)
+                        * 0.25
+                });
+                let blue = channels[0];
+                let green = channels[1];
+                let red = channels[2];
+                let u_offset = (row / 2 * u_stride + column / 2) as usize;
+                let v_offset = (row / 2 * v_stride + column / 2) as usize;
+                u_plane[u_offset] = (128.0 - 0.148 * red - 0.291 * green + 0.439 * blue)
+                    .round()
+                    .clamp(0.0, 255.0) as u8;
+                v_plane[v_offset] = (128.0 + 0.439 * red - 0.368 * green - 0.071 * blue)
+                    .round()
+                    .clamp(0.0, 255.0) as u8;
+            }
+        }
+        return Ok(output);
+    }
+
+    let x_coordinates: Vec<(usize, usize, f32)> = (0..width)
+        .map(|column| {
+            let position =
+                column as f64 * (input_width - 1) as f64 / width.saturating_sub(1).max(1) as f64;
+            let left = position.floor() as usize;
+            (
+                left,
+                (left + 1).min(input_width as usize - 1),
+                (position - left as f64) as f32,
+            )
+        })
+        .collect();
+    let y_coordinates: Vec<(usize, usize, f32)> = (0..height)
+        .map(|row| {
+            let position =
+                row as f64 * (input_height - 1) as f64 / height.saturating_sub(1).max(1) as f64;
+            let top = position.floor() as usize;
+            (
+                top,
+                (top + 1).min(input_height as usize - 1),
+                (position - top as f64) as f32,
+            )
+        })
+        .collect();
     let source_pixel = |x: u32, y: u32| -> (f32, f32, f32) {
-        let source_x = x as f64 * (input_width.saturating_sub(1)) as f64
-            / width.saturating_sub(1).max(1) as f64;
-        let source_y = y as f64 * (input_height.saturating_sub(1)) as f64
-            / height.saturating_sub(1).max(1) as f64;
-        let left = source_x.floor() as u32;
-        let top = source_y.floor() as u32;
-        let right = (left + 1).min(input_width - 1);
-        let bottom = (top + 1).min(input_height - 1);
-        let x_blend = (source_x - left as f64) as f32;
-        let y_blend = (source_y - top as f64) as f32;
-        let sample = |sample_x: u32, sample_y: u32| {
-            let offset = ((sample_y * input_width) + sample_x) as usize * 4;
-            let pixel = &bgra[offset..offset + 4];
-            (pixel[2] as f32, pixel[1] as f32, pixel[0] as f32)
+        let (left, right, x_blend) = x_coordinates[x as usize];
+        let (top, bottom, y_blend) = y_coordinates[y as usize];
+        let top_left = (top * input_width as usize + left) * 4;
+        let top_right = (top * input_width as usize + right) * 4;
+        let bottom_left = (bottom * input_width as usize + left) * 4;
+        let bottom_right = (bottom * input_width as usize + right) * 4;
+        let blend = |channel: usize| {
+            let top = bgra[top_left + channel] as f32
+                + (bgra[top_right + channel] as f32 - bgra[top_left + channel] as f32) * x_blend;
+            let bottom = bgra[bottom_left + channel] as f32
+                + (bgra[bottom_right + channel] as f32 - bgra[bottom_left + channel] as f32)
+                    * x_blend;
+            top + (bottom - top) * y_blend
         };
-        let top_left = sample(left, top);
-        let top_right = sample(right, top);
-        let bottom_left = sample(left, bottom);
-        let bottom_right = sample(right, bottom);
-        let blend = |a: f32, b: f32, amount: f32| a + (b - a) * amount;
-        (
-            blend(
-                blend(top_left.0, top_right.0, x_blend),
-                blend(bottom_left.0, bottom_right.0, x_blend),
-                y_blend,
-            ),
-            blend(
-                blend(top_left.1, top_right.1, x_blend),
-                blend(bottom_left.1, bottom_right.1, x_blend),
-                y_blend,
-            ),
-            blend(
-                blend(top_left.2, top_right.2, x_blend),
-                blend(bottom_left.2, bottom_right.2, x_blend),
-                y_blend,
-            ),
-        )
+        (blend(2), blend(1), blend(0))
     };
 
     for row in 0..height {

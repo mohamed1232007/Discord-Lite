@@ -72,7 +72,7 @@ export function ScreenSharePicker({
 }) {
   const [activeTab, setActiveTab] = useState('screen');
   const [selectedSourceId, setSelectedSourceId] = useState('monitor');
-  const [quality, setQuality] = useState('720');
+  const [quality, setQuality] = useState('1080');
   const [frameRate, setFrameRate] = useState(30);
   const [includeSystemAudio, setIncludeSystemAudio] = useState(true);
 
