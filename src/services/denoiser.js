@@ -47,7 +47,7 @@ export const DENOISE_SETTINGS = {
       highpassHz: 100,
       gateOpenDb: -52,
       gateCloseDb: -58,
-      speechDelayMs: 180,
+      speechDelayMs: 60,
       highShelfHz: 10000,
       highShelfGainDb: -4,
       clarityHz: 3000,

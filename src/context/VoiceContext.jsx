@@ -1,5 +1,5 @@
 import { createContext, useContext, useEffect, useState, useRef } from 'react';
-import { LocalAudioTrack, LocalVideoTrack, Room, RoomEvent, Track, VideoQuality } from 'livekit-client';
+import { LocalAudioTrack, LocalVideoTrack, Room, RoomEvent, Track, VideoQuality, AudioPresets } from 'livekit-client';
 import { invoke } from '@tauri-apps/api/core';
 import { listen } from '@tauri-apps/api/event';
 import { useAuth } from './AuthContext';
@@ -151,7 +151,6 @@ export const VoiceProvider = ({ children }) => {
   const [isScreenSharePickerOpen, setIsScreenSharePickerOpen] = useState(false);
   const [nativeShareSources, setNativeShareSources] = useState(null);
   const [nativeSharePreviews, setNativeSharePreviews] = useState({});
-  const [nativeScreenSharePreview, setNativeScreenSharePreview] = useState(null);
   const [nativeShareSourcesLoading, setNativeShareSourcesLoading] = useState(false);
   const [nativeShareSourcesError, setNativeShareSourcesError] = useState('');
   const [isNativeScreenSharing, setIsNativeScreenSharing] = useState(false);
@@ -198,8 +197,6 @@ export const VoiceProvider = ({ children }) => {
   const nativeScreenShareSourceIdRef = useRef(null);
   const nativeScreenShareUnlistenRef = useRef(null);
   const nativeScreenAudioUnlistenRef = useRef(null);
-  const nativeScreenPreviewUnlistenRef = useRef(null);
-  const nativeScreenSharePreviewReadyRef = useRef(false);
   const nativeScreenSharePreviewRequestsRef = useRef(new Set());
   const dbCallIdRef     = useRef(null);
   const activeCallRef   = useRef(null);      // mirror of activeCall state (للـ closures)
@@ -509,7 +506,10 @@ export const VoiceProvider = ({ children }) => {
   };
 
   const addRemoteTrack = (track, publication, participant) => {
-    if (participant.identity === `${user?.id}:screen`) {
+    if (
+      participant.identity === `${user?.id}:screen`
+      && publication.source !== Track.Source.ScreenShare
+    ) {
       publication.setSubscribed(false);
       return;
     }
@@ -539,7 +539,6 @@ export const VoiceProvider = ({ children }) => {
   };
 
   const removeRemoteTrack = (track, publication, participant) => {
-    if (participant.identity === `${user?.id}:screen`) return;
     const participantId = participant.identity.endsWith(':screen')
       ? participant.identity.slice(0, -':screen'.length)
       : participant.identity;
@@ -565,14 +564,23 @@ export const VoiceProvider = ({ children }) => {
   const connectLiveKitRoom = async (roomId) => {
     if (roomRef.current) throw new Error('A LiveKit room is already connected.');
 
-    const room = new Room({ adaptiveStream: false, dynacast: true });
+    const room = new Room({
+      adaptiveStream: false,
+      dynacast: false,
+      publishDefaults: {
+        simulcast: false,
+        dtx: false,
+        red: true,
+        videoCodec: 'vp8',
+        audioPreset: AudioPresets.music,
+      },
+    });
     intentionalDisconnectRef.current = false;
     roomRef.current = room;
     room.on(RoomEvent.TrackSubscribed, addRemoteTrack);
     room.on(RoomEvent.TrackUnsubscribed, removeRemoteTrack);
     room.on(RoomEvent.ParticipantConnected, markCallConnected);
     room.on(RoomEvent.ParticipantDisconnected, (participant) => {
-      if (participant.identity === `${user?.id}:screen`) return;
       if (participant.identity.endsWith(':screen')) {
         const participantId = participant.identity.slice(0, -':screen'.length);
         const participantTracks = remotePublishedTracksRef.current.get(participantId);
@@ -603,14 +611,18 @@ export const VoiceProvider = ({ children }) => {
       const microphoneTrack = localStreamRef.current?.getAudioTracks()
         .find((track) => track.readyState === 'live');
       if (!microphoneTrack) throw new Error('The processed microphone track is unavailable.');
-      await publishLiveKitTrack(microphoneTrack, 'microphone', Track.Source.Microphone);
+      await publishLiveKitTrack(microphoneTrack, 'microphone', Track.Source.Microphone, {
+        audioPreset: AudioPresets.music,
+        dtx: false,
+      });
 
       const cameraTrack = localStreamRef.current?.getVideoTracks()
         .find((track) => track.readyState === 'live');
       if (cameraTrack && cameraEnabledRef.current) {
         await publishLiveKitTrack(cameraTrack, 'camera', Track.Source.Camera, {
-          videoEncoding: { maxBitrate: 5_000_000, maxFramerate: 30 },
-          degradationPreference: 'maintain-resolution',
+          videoEncoding: { maxBitrate: 3_000_000, maxFramerate: 30 },
+          simulcast: false,
+          degradationPreference: 'maintain-framerate',
         });
       }
       setVoiceReady(true);
@@ -773,14 +785,11 @@ export const VoiceProvider = ({ children }) => {
     intentionalDisconnectRef.current = true;
     if (nativeScreenShareActiveRef.current) {
       nativeScreenShareActiveRef.current = false;
-      nativeScreenSharePreviewReadyRef.current = false;
       nativeScreenShareSourceIdRef.current = null;
       nativeScreenShareUnlistenRef.current?.();
       nativeScreenShareUnlistenRef.current = null;
       nativeScreenAudioUnlistenRef.current?.();
       nativeScreenAudioUnlistenRef.current = null;
-      nativeScreenPreviewUnlistenRef.current?.();
-      nativeScreenPreviewUnlistenRef.current = null;
       invoke('stop_native_screen_share').catch((error) => {
         console.error('[ScreenShare] Could not stop native sharing during provider cleanup:', error);
       });
@@ -1018,9 +1027,9 @@ export const VoiceProvider = ({ children }) => {
         audio: audioConstraints,
         video: includeVideo
           ? {
-              width: { ideal: 1920 },
-              height: { ideal: 1080 },
-              frameRate: { ideal: 30 },
+              width: { ideal: 1280, max: 1920 },
+              height: { ideal: 720, max: 1080 },
+              frameRate: { ideal: 30, max: 30 },
             }
           : false,
       });
@@ -1552,8 +1561,6 @@ export const VoiceProvider = ({ children }) => {
       nativeScreenShareUnlistenRef.current = null;
       nativeScreenAudioUnlistenRef.current?.();
       nativeScreenAudioUnlistenRef.current = null;
-      nativeScreenPreviewUnlistenRef.current?.();
-      nativeScreenPreviewUnlistenRef.current = null;
       invoke('stop_native_screen_share').catch((error) => {
         console.error('[ScreenShare] Could not stop native sharing when ending the call:', error);
       });
@@ -1630,7 +1637,6 @@ export const VoiceProvider = ({ children }) => {
     setIsVideoEnabled(false);
     setIsScreenSharing(false);
     setIsNativeScreenSharing(false);
-    setNativeScreenSharePreview(null);
     setIsRemoteScreenSharing(false);
     setIsRemoteCamera(false);
   };
@@ -1822,9 +1828,9 @@ export const VoiceProvider = ({ children }) => {
       if (!await requestMediaPermission('camera')) return;
       cameraStream = await navigator.mediaDevices.getUserMedia({
         video: {
-          width: { ideal: 1920 },
-          height: { ideal: 1080 },
-          frameRate: { ideal: 30 },
+          width: { ideal: 1280, max: 1920 },
+          height: { ideal: 720, max: 1080 },
+          frameRate: { ideal: 30, max: 30 },
         },
       });
       const acquiredTrack = cameraStream.getVideoTracks()[0];
@@ -1833,8 +1839,9 @@ export const VoiceProvider = ({ children }) => {
       acquiredTrack.contentHint = 'motion';
 
       await publishLiveKitTrack(acquiredTrack, 'camera', Track.Source.Camera, {
-        videoEncoding: { maxBitrate: 5_000_000, maxFramerate: 30 },
-        degradationPreference: 'maintain-resolution',
+        videoEncoding: { maxBitrate: 3_000_000, maxFramerate: 30 },
+        simulcast: false,
+        degradationPreference: 'maintain-framerate',
       });
       localStreamRef.current?.addTrack(acquiredTrack);
       if (localVideoRef.current) {
@@ -1893,9 +1900,6 @@ export const VoiceProvider = ({ children }) => {
     nativeScreenShareUnlistenRef.current = null;
     nativeScreenAudioUnlistenRef.current?.();
     nativeScreenAudioUnlistenRef.current = null;
-    nativeScreenPreviewUnlistenRef.current?.();
-    nativeScreenPreviewUnlistenRef.current = null;
-    nativeScreenSharePreviewReadyRef.current = false;
     try {
       await invoke('stop_native_screen_share');
     } catch (error) {
@@ -1907,8 +1911,6 @@ export const VoiceProvider = ({ children }) => {
           (event) => {
             if (event.payload !== sourceId) return;
             nativeScreenShareActiveRef.current = false;
-            nativeScreenSharePreviewReadyRef.current = false;
-            setNativeScreenSharePreview(null);
             nativeScreenShareSourceIdRef.current = null;
             nativeScreenShareUnlistenRef.current?.();
             nativeScreenShareUnlistenRef.current = null;
@@ -1923,7 +1925,6 @@ export const VoiceProvider = ({ children }) => {
       throw error;
     }
     nativeScreenShareActiveRef.current = false;
-    setNativeScreenSharePreview(null);
     setIsNativeScreenSharing(false);
     setIsScreenSharing(false);
     publishCallState({ screen: false, screenAudio: false });
@@ -1972,9 +1973,6 @@ export const VoiceProvider = ({ children }) => {
       try {
         nativeScreenShareUnlistenRef.current?.();
         nativeScreenAudioUnlistenRef.current?.();
-        nativeScreenPreviewUnlistenRef.current?.();
-        setNativeScreenSharePreview(null);
-        nativeScreenSharePreviewReadyRef.current = false;
         nativeScreenShareSourceIdRef.current = displaySurface.id;
         nativeScreenShareActiveRef.current = true;
         nativeScreenShareUnlistenRef.current = await listen(
@@ -1987,9 +1985,6 @@ export const VoiceProvider = ({ children }) => {
             nativeScreenShareUnlistenRef.current = null;
             nativeScreenAudioUnlistenRef.current?.();
             nativeScreenAudioUnlistenRef.current = null;
-            nativeScreenPreviewUnlistenRef.current?.();
-            nativeScreenPreviewUnlistenRef.current = null;
-            setNativeScreenSharePreview(null);
             setIsNativeScreenSharing(false);
             setIsScreenSharing(false);
             publishCallState({ screen: false, screenAudio: false });
@@ -1997,22 +1992,6 @@ export const VoiceProvider = ({ children }) => {
             invoke('stop_native_screen_share').catch((error) => {
               console.error('[ScreenShare] Could not clean up the ended native share:', error);
             });
-          },
-        );
-        nativeScreenPreviewUnlistenRef.current = await listen(
-          'native-screen-share-preview',
-          (event) => {
-            if (
-              event.payload?.sourceId !== displaySurface.id
-              || !nativeScreenShareActiveRef.current
-            ) return;
-            setNativeScreenSharePreview(event.payload.dataUrl);
-            if (!nativeScreenSharePreviewReadyRef.current) {
-              nativeScreenSharePreviewReadyRef.current = true;
-              setIsNativeScreenSharing(true);
-              setIsScreenSharing(true);
-              publishCallState({ screen: true });
-            }
           },
         );
         try {
@@ -2064,16 +2043,11 @@ export const VoiceProvider = ({ children }) => {
         }
       } catch (error) {
         nativeScreenShareActiveRef.current = false;
-        nativeScreenSharePreviewReadyRef.current = false;
         nativeScreenShareSourceIdRef.current = null;
         nativeScreenShareUnlistenRef.current?.();
         nativeScreenShareUnlistenRef.current = null;
         nativeScreenAudioUnlistenRef.current?.();
         nativeScreenAudioUnlistenRef.current = null;
-        nativeScreenPreviewUnlistenRef.current?.();
-        nativeScreenPreviewUnlistenRef.current = null;
-        setNativeScreenSharePreview(null);
-        nativeScreenSharePreviewReadyRef.current = false;
         setIsNativeScreenSharing(false);
         setIsScreenSharing(false);
         publishCallState({ screen: false, screenAudio: false });
@@ -2086,16 +2060,15 @@ export const VoiceProvider = ({ children }) => {
     let stream = null;
     try {
       const qualityPresets = {
-        480: { width: 854, height: 480, maxBitrate: 2_500_000 },
-        720: { width: 1280, height: 720, maxBitrate: 5_000_000 },
-        1080: { width: 1920, height: 1080, maxBitrate: 8_000_000 },
+        480: { width: 854, height: 480, maxBitrate: 2_000_000 },
+        720: { width: 1280, height: 720, maxBitrate: 3_500_000 },
+        1080: { width: 1920, height: 1080, maxBitrate: 6_000_000 },
       };
-      const preset = qualityPresets[shareOptions.quality] || qualityPresets[720];
+      const preset = qualityPresets[shareOptions.quality] || qualityPresets[1080];
       const frameRate = shareOptions.frameRate || 30;
       const includeSystemAudio = shareOptions.includeSystemAudio !== false;
       stream = await navigator.mediaDevices.getDisplayMedia({
         video: {
-          displaySurface: { ideal: displaySurface },
           width: { ideal: preset.width, max: preset.width },
           height: { ideal: preset.height, max: preset.height },
           frameRate: { ideal: frameRate, max: frameRate },
@@ -2105,15 +2078,39 @@ export const VoiceProvider = ({ children }) => {
       });
       const screenTrack = stream.getVideoTracks()[0];
       if (!screenTrack) throw new Error('Screen capture did not provide a video track.');
+      if (typeof screenTrack.applyConstraints === 'function') {
+        try {
+          await screenTrack.applyConstraints({
+            width: { ideal: preset.width, max: preset.width },
+            height: { ideal: preset.height, max: preset.height },
+            frameRate: { ideal: frameRate, max: frameRate },
+          });
+        } catch (error) {
+          console.warn('[ScreenShare] Browser could not apply all capture constraints:', error);
+        }
+      }
       screenTrack.contentHint = 'detail';
       screenStreamRef.current = stream;
       await publishLiveKitTrack(screenTrack, 'screen', Track.Source.ScreenShare, {
+        videoEncoding: {
+          maxBitrate: preset.maxBitrate,
+          maxFramerate: frameRate,
+        },
         screenShareEncoding: {
           maxBitrate: preset.maxBitrate,
           maxFramerate: frameRate,
         },
+        simulcast: false,
         degradationPreference: 'maintain-resolution',
       });
+      const actualCapture = screenTrack.getSettings();
+      if (
+        (actualCapture.width && actualCapture.width > preset.width)
+        || (actualCapture.height && actualCapture.height > preset.height)
+        || (actualCapture.frameRate && actualCapture.frameRate > frameRate + 1)
+      ) {
+        toast.warning('The browser capture exceeds a selected screen-share limit; the stream bitrate and frame rate are still capped.');
+      }
 
       const screenAudioTrack = stream.getAudioTracks()[0] || null;
       let screenAudioShared = false;
@@ -2139,7 +2136,7 @@ export const VoiceProvider = ({ children }) => {
       }
 
       if (localVideoRef.current) {
-        localVideoRef.current.srcObject = new MediaStream([screenTrack]);
+        localVideoRef.current.srcObject = stream;
         localVideoRef.current.play().catch(() => {});
       }
       setIsScreenSharing(true);
@@ -2178,15 +2175,19 @@ export const VoiceProvider = ({ children }) => {
       toast.info('Wait until the call is connected before sharing your screen.');
       return;
     }
-    setIsScreenSharePickerOpen(true);
     if (isNativeDesktop) {
+      setIsScreenSharePickerOpen(true);
       setNativeShareSources([]);
       setNativeShareSourcesError('');
       setNativeSharePreviews({});
       nativeScreenSharePreviewRequestsRef.current.clear();
       await refreshNativeScreenShareSources();
     } else {
-      setNativeShareSources(null);
+      await startScreenShare('monitor', {
+        quality: '1080',
+        frameRate: 30,
+        includeSystemAudio: true,
+      });
     }
   };
 
@@ -2330,7 +2331,6 @@ export const VoiceProvider = ({ children }) => {
       isVideoEnabled,
       isScreenSharing,
       isNativeScreenSharing,
-      nativeScreenSharePreview,
       isRemoteScreenSharing,
       isRemoteCamera,
       isNoiseSuppressionEnabled,

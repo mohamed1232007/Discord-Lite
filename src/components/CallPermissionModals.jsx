@@ -1,6 +1,5 @@
 import {
   AppWindow,
-  Camera,
   Check,
   Mic,
   Monitor,
@@ -78,16 +77,10 @@ export function ScreenSharePicker({
 
   const isNativePicker = Array.isArray(nativeSources);
 
-  const tabs = useMemo(() => {
-    const list = [
-      { id: 'screen', label: 'Screens', Icon: Monitor },
-      { id: 'applications', label: 'Applications', Icon: AppWindow },
-    ];
-    if (isNativePicker) {
-      list.push({ id: 'devices', label: 'Audio', Icon: Camera });
-    }
-    return list;
-  }, [isNativePicker]);
+  const tabs = useMemo(() => [
+    { id: 'screen', label: 'Screens', Icon: Monitor },
+    { id: 'applications', label: 'Applications', Icon: AppWindow },
+  ], []);
 
   const visibleSources = useMemo(() => {
     if (!isNativePicker) return [];
@@ -101,18 +94,9 @@ export function ScreenSharePicker({
 
   if (!open) return null;
 
-  const browserOptions = [
-    { type: 'monitor', label: 'Entire screen', Icon: Monitor },
-    { type: 'window', label: 'Application window', Icon: AppWindow },
-  ];
-
   const startSharing = () => {
-    if (activeTab === 'devices') {
-      setActiveTab('screen');
-      return;
-    }
     if (!isNativePicker) {
-      onSelect(selectedSourceId === 'monitor' ? 'monitor' : 'window', {
+      onSelect('monitor', {
         quality,
         frameRate,
         includeSystemAudio,
@@ -138,7 +122,9 @@ export function ScreenSharePicker({
   return (
     <div className="fixed inset-0 z-[120] flex items-center justify-center bg-black/75 p-4 backdrop-blur-sm">
       <section
-        className="flex max-h-[min(720px,90vh)] w-full max-w-[860px] flex-col overflow-hidden rounded-xl border border-[#2b2d31] bg-[#313338] text-white shadow-[0_24px_80px_rgba(0,0,0,0.7)]"
+        className={`flex max-h-[88vh] ${
+          isNativePicker ? 'w-[min(1100px,94vw)]' : 'w-[min(760px,94vw)]'
+        } flex-col overflow-hidden rounded-xl border border-[#2b2d31] bg-[#313338] text-white shadow-[0_24px_80px_rgba(0,0,0,0.7)]`}
         role="dialog"
         aria-modal="true"
         aria-labelledby="screen-share-title"
@@ -161,63 +147,36 @@ export function ScreenSharePicker({
             </button>
           </div>
 
-          <nav className="mt-3 flex gap-1 border-b border-[#3f4147]" aria-label="Share source type">
-            {tabs.map(({ id, label, Icon }) => (
-              <button
-                key={id}
-                type="button"
-                onClick={() => {
-                  setActiveTab(id);
-                  if (!isNativePicker) setSelectedSourceId(id === 'screen' ? 'monitor' : 'window');
-                }}
-                className={`relative flex items-center gap-1.5 px-3 py-2 text-sm font-medium transition ${
-                  activeTab === id
-                    ? 'text-white'
-                    : 'text-[#949ba4] hover:text-[#dbdee1]'
-                }`}
-                aria-pressed={activeTab === id}
-              >
-                <Icon size={15} />
-                {label}
-                {activeTab === id && (
-                  <span className="absolute bottom-0 left-0 right-0 h-0.5 rounded-t-full bg-[#5865f2]" />
-                )}
-              </button>
-            ))}
-          </nav>
+          {isNativePicker && (
+            <nav className="mt-3 flex gap-1 border-b border-[#3f4147]" aria-label="Share source type">
+              {tabs.map(({ id, label, Icon }) => (
+                <button
+                  key={id}
+                  type="button"
+                  onClick={() => setActiveTab(id)}
+                  className={`relative flex items-center gap-1.5 px-3 py-2 text-sm font-medium transition ${
+                    activeTab === id
+                      ? 'text-white'
+                      : 'text-[#949ba4] hover:text-[#dbdee1]'
+                  }`}
+                  aria-pressed={activeTab === id}
+                >
+                  <Icon size={15} />
+                  {label}
+                  {activeTab === id && (
+                    <span className="absolute bottom-0 left-0 right-0 h-0.5 rounded-t-full bg-[#5865f2]" />
+                  )}
+                </button>
+              ))}
+            </nav>
+          )}
         </header>
 
-        <main className="min-h-0 flex-1 overflow-y-auto p-4 discord-scrollbar">
-          {activeTab === 'devices' ? (
-            <section className="mx-auto flex max-w-sm flex-col items-center rounded-lg bg-[#2b2d31] px-6 py-8 text-center">
-              <div className="mb-3 flex h-12 w-12 items-center justify-center rounded-full bg-[#5865f2]/15 text-[#aeb8ff]">
-                <Volume2 size={22} />
-              </div>
-              <h3 className="text-sm font-bold">System Audio</h3>
-              <p className="mt-1.5 text-xs leading-5 text-[#b5bac1]">
-                Share audio from your device along with your screen.
-              </p>
-              <button
-                type="button"
-                role="switch"
-                aria-checked={includeSystemAudio}
-                onClick={() => setIncludeSystemAudio((v) => !v)}
-                className={`mt-4 flex items-center gap-2 rounded-full px-3.5 py-1.5 text-xs font-semibold transition ${
-                  includeSystemAudio ? 'bg-[#23a55a]/15 text-[#57f287]' : 'bg-[#3f4147] text-[#b5bac1]'
-                }`}
-              >
-                <span className={`flex h-4 w-4 items-center justify-center rounded-full ${
-                  includeSystemAudio ? 'bg-[#23a55a] text-white' : 'bg-[#4e5058]'
-                }`}>
-                  {includeSystemAudio && <Check size={11} />}
-                </span>
-                {includeSystemAudio ? 'Audio on' : 'Audio off'}
-              </button>
-            </section>
-          ) : isNativePicker ? (
+        <main className={`min-h-0 overflow-y-auto p-4 discord-scrollbar ${isNativePicker ? 'flex-1' : ''}`}>
+          {isNativePicker ? (
             <>
               {sourcesError && <p role="alert" className="mb-3 text-xs text-[#f23f43]">{sourcesError}</p>}
-              <div className="grid grid-cols-2 gap-3 lg:grid-cols-3" aria-live="polite">
+              <div className="grid grid-cols-1 gap-4 sm:grid-cols-2" aria-live="polite">
                 {visibleSources.map((source) => {
                   const SourceIcon = source.kind === 'monitor' ? Monitor : AppWindow;
                   const isSelected = (selectedSource?.id || selectedSourceId) === source.id;
@@ -281,95 +240,75 @@ export function ScreenSharePicker({
               )}
             </>
           ) : (
-            <div className="grid grid-cols-2 gap-3">
-              {browserOptions.map(({ type, label, Icon }) => {
-                const isSelected = selectedSourceId === type;
-                return (
-                  <button
-                    key={type}
-                    type="button"
-                    onClick={() => setSelectedSourceId(type)}
-                    className={`overflow-hidden rounded-lg border-2 text-left transition ${
-                      isSelected
-                        ? 'border-[#5865f2] bg-[#5865f2]/5'
-                        : 'border-transparent hover:border-[#4e5058]'
-                    }`}
-                    aria-pressed={isSelected}
-                  >
-                    <div className="flex aspect-video items-center justify-center bg-[#1e1f22]">
-                      <div className="flex h-16 w-16 items-center justify-center rounded-2xl bg-[#2b2d31] text-[#949ba4]">
-                        <Icon size={32} />
-                      </div>
-                    </div>
-                    <div className="px-3 py-2.5 text-sm font-medium">{label}</div>
-                  </button>
-                );
-              })}
+            <div className="flex items-center gap-4 rounded-lg border border-[#3f4147] bg-[#1e1f22] px-5 py-4">
+              <div className="flex h-11 w-11 shrink-0 items-center justify-center rounded-xl bg-[#2b2d31] text-[#aeb8ff]">
+                <Monitor size={32} />
+              </div>
+              <div>
+                <h3 className="text-sm font-semibold text-white">Choose a screen or window</h3>
+                <p className="mt-1 text-xs leading-5 text-[#b5bac1]">
+                  Select “Choose screen” to open the browser’s secure picker with live previews. Select your source there
+                  to start sharing.
+                </p>
+              </div>
             </div>
           )}
         </main>
 
         <footer className="flex items-center justify-between border-t border-[#3f4147] px-4 py-3">
           <div className="flex items-center gap-2">
-            {activeTab !== 'devices' && (
-              <>
-                <div className="flex items-center gap-1 rounded-md bg-[#2b2d31] p-0.5">
-                  {qualityPresets.map(({ value, label }) => (
-                    <button
-                      key={value}
-                      type="button"
-                      onClick={() => setQuality(value)}
-                      className={`rounded px-2.5 py-1 text-xs font-semibold transition ${
-                        quality === value
-                          ? 'bg-[#5865f2] text-white'
-                          : 'text-[#949ba4] hover:text-white'
-                      }`}
-                      aria-pressed={quality === value}
-                    >
-                      {label}
-                    </button>
-                  ))}
-                </div>
-
-                <div className="mx-1 h-4 w-px bg-[#3f4147]" />
-
-                <div className="flex items-center gap-1 rounded-md bg-[#2b2d31] p-0.5">
-                  {fpsPresets.map(({ value, label }) => (
-                    <button
-                      key={value}
-                      type="button"
-                      onClick={() => setFrameRate(value)}
-                      className={`rounded px-2 py-1 text-xs font-semibold transition ${
-                        frameRate === value
-                          ? 'bg-[#5865f2] text-white'
-                          : 'text-[#949ba4] hover:text-white'
-                      }`}
-                      aria-pressed={frameRate === value}
-                    >
-                      {label} FPS
-                    </button>
-                  ))}
-                </div>
-              </>
-            )}
-            {!isNativePicker && activeTab !== 'devices' && (
-              <>
-                <div className="mx-1 h-4 w-px bg-[#3f4147]" />
+            <div className="flex items-center gap-1 rounded-md bg-[#2b2d31] p-0.5">
+              {qualityPresets.map(({ value, label }) => (
                 <button
+                  key={value}
                   type="button"
-                  role="switch"
-                  aria-checked={includeSystemAudio}
-                  onClick={() => setIncludeSystemAudio((v) => !v)}
-                  className={`flex items-center gap-1.5 rounded-md px-2.5 py-1.5 text-xs font-semibold transition ${
-                    includeSystemAudio ? 'bg-[#23a55a]/15 text-[#57f287]' : 'bg-[#2b2d31] text-[#b5bac1]'
+                  onClick={() => setQuality(value)}
+                  className={`rounded px-2.5 py-1 text-xs font-semibold transition ${
+                    quality === value
+                      ? 'bg-[#5865f2] text-white'
+                      : 'text-[#949ba4] hover:text-white'
                   }`}
+                  aria-pressed={quality === value}
                 >
-                  <Volume2 size={13} />
-                  Audio {includeSystemAudio ? 'on' : 'off'}
+                  {label}
                 </button>
-              </>
-            )}
-            {isNativePicker && activeTab !== 'devices' && (
+              ))}
+            </div>
+
+            <div className="mx-1 h-4 w-px bg-[#3f4147]" />
+
+            <div className="flex items-center gap-1 rounded-md bg-[#2b2d31] p-0.5">
+              {fpsPresets.map(({ value, label }) => (
+                <button
+                  key={value}
+                  type="button"
+                  onClick={() => setFrameRate(value)}
+                  className={`rounded px-2 py-1 text-xs font-semibold transition ${
+                    frameRate === value
+                      ? 'bg-[#5865f2] text-white'
+                      : 'text-[#949ba4] hover:text-white'
+                  }`}
+                  aria-pressed={frameRate === value}
+                >
+                  {label} FPS
+                </button>
+              ))}
+            </div>
+
+            <div className="mx-1 h-4 w-px bg-[#3f4147]" />
+            <button
+              type="button"
+              role="switch"
+              aria-checked={includeSystemAudio}
+              onClick={() => setIncludeSystemAudio((v) => !v)}
+              className={`flex items-center gap-1.5 rounded-md px-2.5 py-1.5 text-xs font-semibold transition ${
+                includeSystemAudio ? 'bg-[#23a55a]/15 text-[#57f287]' : 'bg-[#2b2d31] text-[#b5bac1]'
+              }`}
+            >
+              <Volume2 size={13} />
+              Audio {includeSystemAudio ? 'on' : 'off'}
+            </button>
+            {isNativePicker && (
               <>
                 <div className="mx-1 h-4 w-px bg-[#3f4147]" />
                 <button
@@ -396,9 +335,9 @@ export function ScreenSharePicker({
               type="button"
               className="rounded-md bg-[#5865f2] px-4 py-1.5 text-sm font-semibold text-white transition hover:bg-[#4752c4] disabled:opacity-50"
               onClick={startSharing}
-              disabled={isNativePicker && activeTab !== 'devices' && (!selectedSource || sourcesLoading)}
+              disabled={isNativePicker && (!selectedSource || sourcesLoading)}
             >
-              {activeTab === 'devices' ? 'Go Live' : 'Go Live'}
+              {isNativePicker ? 'Go Live' : 'Choose screen'}
             </button>
           </div>
         </footer>

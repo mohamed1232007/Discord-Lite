@@ -25,33 +25,25 @@ const BACKEND_URL = import.meta.env.VITE_BACKEND_URL || 'http://localhost:5000/a
 const createParticipantAudioPipeline = (context, track, volume) => {
   const source = context.createMediaStreamSource(new MediaStream([track]));
   const gain = context.createGain();
-  const leveler = context.createDynamicsCompressor();
   const limiter = context.createDynamicsCompressor();
   const destination = context.createMediaStreamDestination();
 
   gain.gain.value = volume;
-  leveler.threshold.value = -24;
-  leveler.knee.value = 18;
-  leveler.ratio.value = 3;
-  leveler.attack.value = 0.01;
-  leveler.release.value = 0.2;
   limiter.threshold.value = -1;
   limiter.knee.value = 0;
   limiter.ratio.value = 20;
   limiter.attack.value = 0.003;
   limiter.release.value = 0.15;
 
-  source.connect(leveler);
-  leveler.connect(gain);
+  source.connect(gain);
   gain.connect(limiter);
   limiter.connect(destination);
 
-  return { track, context, source, gain, leveler, limiter, destination };
+  return { track, context, source, gain, limiter, destination };
 };
 
 const disposeParticipantAudioPipeline = (pipeline) => {
   pipeline.source.disconnect();
-  pipeline.leveler.disconnect();
   pipeline.gain.disconnect();
   pipeline.limiter.disconnect();
 };
@@ -77,7 +69,6 @@ export default function CallScreen({ onOpenChat }) {
     isVideoEnabled,
     isScreenSharing,
     isNativeScreenSharing,
-    nativeScreenSharePreview,
     isRemoteScreenSharing,
     isRemoteCamera,
     localVideoRef,
@@ -324,6 +315,9 @@ export default function CallScreen({ onOpenChat }) {
   const myName     = currentUser?.display_name || currentUser?.username || 'Me';
 
   const activeParticipants = callParticipants.filter((participant) => participant.status === 'active');
+  const nativeScreenLocalStream = isNativeScreenSharing
+    ? remoteStreams.find((entry) => entry.userId === currentUser?.id)?.screenShareStream
+    : null;
   const remoteScreenParticipant = activeParticipants.find((participant) => (
     participant.user_id !== currentUser?.id && remoteCallStates[participant.user_id]?.screen
   ));
@@ -364,6 +358,8 @@ export default function CallScreen({ onOpenChat }) {
   const setVideoStream = (element, stream) => {
     if (!element || !stream) return;
     if (element.srcObject !== stream) element.srcObject = stream;
+    element.muted = true;
+    element.volume = 0;
     element.play().catch((error) => console.warn('[Video] play blocked:', error));
   };
   const getRemoteStream = (participantId, source = 'stream') => (
@@ -667,10 +663,12 @@ export default function CallScreen({ onOpenChat }) {
             ) : (
               <div className="w-full h-full relative flex items-center justify-center">
                 {isNativeScreenSharing ? (
-                  nativeScreenSharePreview ? (
-                    <img
-                      src={nativeScreenSharePreview}
-                      alt="Preview of your shared screen"
+                  nativeScreenLocalStream ? (
+                    <video
+                      ref={(element) => setVideoStream(element, nativeScreenLocalStream)}
+                      autoPlay
+                      muted
+                      playsInline
                       className="h-full w-full bg-black object-contain"
                     />
                   ) : (
@@ -681,7 +679,15 @@ export default function CallScreen({ onOpenChat }) {
                   )
                 ) : (
                   <video
-                    ref={localVideoRef}
+                    ref={(element) => {
+                      localVideoRef.current = element;
+                      if (element && screenStreamRef.current) {
+                        if (element.srcObject !== screenStreamRef.current) {
+                          element.srcObject = screenStreamRef.current;
+                        }
+                        element.play().catch(() => {});
+                      }
+                    }}
                     autoPlay
                     muted
                     playsInline
@@ -710,10 +716,12 @@ export default function CallScreen({ onOpenChat }) {
                 <div className="w-full h-full relative flex items-center justify-center">
                   {isScreenSharing ? (
                     isNativeScreenSharing ? (
-                      nativeScreenSharePreview ? (
-                        <img
-                          src={nativeScreenSharePreview}
-                          alt="Preview of your shared screen"
+                      nativeScreenLocalStream ? (
+                        <video
+                          ref={(element) => setVideoStream(element, nativeScreenLocalStream)}
+                          autoPlay
+                          muted
+                          playsInline
                           className="h-full w-full object-cover"
                         />
                       ) : (

@@ -6,7 +6,7 @@ use std::{
         mpsc,
     },
     thread::{self, JoinHandle},
-    time::{Duration, Instant},
+    time::Duration,
 };
 
 use base64::{Engine as _, engine::general_purpose::STANDARD as BASE64};
@@ -39,8 +39,6 @@ use windows_capture::{
 const SCREEN_ID_PREFIX: &str = "screen:";
 const LOOPBACK_SAMPLE_RATE: u32 = 48_000;
 const LOOPBACK_CHANNELS: u32 = 2;
-const SHARE_PREVIEW_WIDTH: u32 = 960;
-const SHARE_PREVIEW_HEIGHT: u32 = 540;
 const AUDIO_FRAME_SAMPLES: usize =
     (LOOPBACK_SAMPLE_RATE as usize / 100) * LOOPBACK_CHANNELS as usize;
 static NEXT_SOURCE_ID: AtomicU64 = AtomicU64::new(1);
@@ -55,13 +53,6 @@ pub struct ShareSource {
     height: u32,
 }
 
-#[derive(Clone, Serialize)]
-#[serde(rename_all = "camelCase")]
-struct NativeSharePreview {
-    source_id: String,
-    data_url: String,
-}
-
 #[derive(Clone)]
 struct CaptureFlags {
     width: u32,
@@ -74,7 +65,6 @@ struct CaptureFlags {
 
 struct ScreenCapture {
     flags: CaptureFlags,
-    last_preview_at: Option<Instant>,
 }
 
 #[derive(Clone, Copy)]
@@ -105,7 +95,6 @@ impl GraphicsCaptureApiHandler for ScreenCapture {
     fn new(context: Context<Self::Flags>) -> Result<Self, Self::Error> {
         Ok(Self {
             flags: context.flags,
-            last_preview_at: None,
         })
     }
 
@@ -133,32 +122,6 @@ impl GraphicsCaptureApiHandler for ScreenCapture {
             )?;
             let video_frame = VideoFrame::new(VideoRotation::VideoRotation0, i420);
             self.flags.video_source.capture_frame(&video_frame);
-            if self
-                .last_preview_at
-                .is_none_or(|last| last.elapsed() >= Duration::from_secs(1))
-            {
-                self.last_preview_at = Some(Instant::now());
-                match encode_bgra_preview(
-                    &bgra,
-                    frame_width,
-                    frame_height,
-                    SHARE_PREVIEW_WIDTH,
-                    SHARE_PREVIEW_HEIGHT,
-                ) {
-                    Ok(data_url) => {
-                        let _ = self.flags.app.emit(
-                            "native-screen-share-preview",
-                            NativeSharePreview {
-                                source_id: self.flags.source_id.clone(),
-                                data_url,
-                            },
-                        );
-                    }
-                    Err(error) => {
-                        log::warn!("Could not encode the local screen-share preview: {error}");
-                    }
-                }
-            }
             Ok(())
         })();
         if let Err(error) = &result {
@@ -455,9 +418,9 @@ pub async fn start_native_screen_share(
         return Err("The LiveKit connection details are invalid.".to_owned());
     }
     let (max_width, max_height, max_bitrate) = match quality.as_str() {
-        "480" => (854, 480, 2_500_000),
-        "720" => (1280, 720, 5_000_000),
-        "1080" => (1920, 1080, 8_000_000),
+        "480" => (854, 480, 1_500_000),
+        "720" => (1280, 720, 3_000_000),
+        "1080" => (1920, 1080, 5_000_000),
         _ => return Err("Choose a supported screen-share resolution.".to_owned()),
     };
     if !matches!(frame_rate, 15 | 30 | 60) {
@@ -521,7 +484,7 @@ pub async fn start_native_screen_share(
             max_bitrate,
             max_framerate: frame_rate as f64,
         }),
-        degradation_preference: Some(DegradationPreference::MaintainResolution),
+        degradation_preference: Some(DegradationPreference::MaintainFramerate),
         ..Default::default()
     };
     if let Err(error) = room
@@ -758,46 +721,15 @@ fn bgra_to_i420(
         return Ok(output);
     }
 
-    let x_coordinates: Vec<(usize, usize, f32)> = (0..width)
-        .map(|column| {
-            let position =
-                column as f64 * (input_width - 1) as f64 / width.saturating_sub(1).max(1) as f64;
-            let left = position.floor() as usize;
-            (
-                left,
-                (left + 1).min(input_width as usize - 1),
-                (position - left as f64) as f32,
-            )
-        })
-        .collect();
-    let y_coordinates: Vec<(usize, usize, f32)> = (0..height)
-        .map(|row| {
-            let position =
-                row as f64 * (input_height - 1) as f64 / height.saturating_sub(1).max(1) as f64;
-            let top = position.floor() as usize;
-            (
-                top,
-                (top + 1).min(input_height as usize - 1),
-                (position - top as f64) as f32,
-            )
-        })
-        .collect();
     let source_pixel = |x: u32, y: u32| -> (f32, f32, f32) {
-        let (left, right, x_blend) = x_coordinates[x as usize];
-        let (top, bottom, y_blend) = y_coordinates[y as usize];
-        let top_left = (top * input_width as usize + left) * 4;
-        let top_right = (top * input_width as usize + right) * 4;
-        let bottom_left = (bottom * input_width as usize + left) * 4;
-        let bottom_right = (bottom * input_width as usize + right) * 4;
-        let blend = |channel: usize| {
-            let top = bgra[top_left + channel] as f32
-                + (bgra[top_right + channel] as f32 - bgra[top_left + channel] as f32) * x_blend;
-            let bottom = bgra[bottom_left + channel] as f32
-                + (bgra[bottom_right + channel] as f32 - bgra[bottom_left + channel] as f32)
-                    * x_blend;
-            top + (bottom - top) * y_blend
-        };
-        (blend(2), blend(1), blend(0))
+        let source_x = (x as u64 * input_width as u64 / width as u64) as usize;
+        let source_y = (y as u64 * input_height as u64 / height as u64) as usize;
+        let offset = (source_y * input_width as usize + source_x) * 4;
+        (
+            bgra[offset + 2] as f32,
+            bgra[offset + 1] as f32,
+            bgra[offset] as f32,
+        )
     };
 
     for row in 0..height {

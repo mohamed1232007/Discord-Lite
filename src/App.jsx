@@ -167,13 +167,15 @@ function MainApp() {
             />
 
             {/* 3. الجانب الأيمن: شاشة الكول الكبيرة أو الشات أو الأصدقاء */}
-            {activeCall && !isChatVisible ? (
-              <Suspense fallback={<ScreenFallback />}>
-                <CallScreen onOpenChat={(participant) => {
-                  const chatUser = participant?.id ? participant : activeCall.friend;
-                  if (chatUser?.id) openChat(chatUser);
-                }} />
-              </Suspense>
+            {activeCall ? (
+              <div className={!isChatVisible ? 'flex min-w-0 flex-1' : 'hidden'}>
+                <Suspense fallback={<ScreenFallback />}>
+                  <CallScreen onOpenChat={(participant) => {
+                    const chatUser = participant?.id ? participant : activeCall.friend;
+                    if (chatUser?.id) openChat(chatUser);
+                  }} />
+                </Suspense>
+              </div>
             ) : null}
 
             {selectedChat ? (
