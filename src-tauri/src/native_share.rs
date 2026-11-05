@@ -374,7 +374,7 @@ fn capture_source_preview(source: CaptureSource) -> Result<String, String> {
     let settings = Settings::new(
         source,
         CursorCaptureSettings::WithoutCursor,
-        DrawBorderSettings::WithoutBorder,
+        DrawBorderSettings::Default,
         SecondaryWindowSettings::Default,
         MinimumUpdateIntervalSettings::Custom(Duration::from_millis(100)),
         DirtyRegionSettings::Default,
@@ -507,7 +507,7 @@ pub async fn start_native_screen_share(
     let settings = Settings::new(
         capture_item,
         CursorCaptureSettings::WithCursor,
-        DrawBorderSettings::WithoutBorder,
+        DrawBorderSettings::Default,
         SecondaryWindowSettings::Default,
         MinimumUpdateIntervalSettings::Custom(Duration::from_millis(1000 / frame_rate as u64)),
         DirtyRegionSettings::Default,

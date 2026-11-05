@@ -715,7 +715,7 @@ export default function DMSidebar({
 
                     {/* Settings Popup Menu */}
                     {showSettingsMenu && (
-                      <div className="absolute bottom-9 right-0 w-44 bg-[#111214] border border-[#2b2d31] rounded-xl shadow-2xl p-1.5 z-50 flex flex-col gap-0.5 animate-in fade-in slide-in-from-bottom-2 duration-150">
+                      <div className="settings-menu-enter absolute bottom-9 right-0 z-50 flex w-44 flex-col gap-0.5 rounded-xl border border-white/10 bg-black p-1.5 shadow-2xl">
                         <button
                           type="button"
                           onClick={() => {

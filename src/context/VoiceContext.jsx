@@ -11,6 +11,9 @@ import { useCallRoomSync } from '../hooks/useCallRoomSync';
 import { MediaPermissionModal, ScreenSharePicker } from '../components/CallPermissionModals';
 
 const VoiceContext = createContext({});
+const isScreenCaptureCancelled = (error) => (
+  error?.name === 'AbortError' || error?.name === 'NotAllowedError'
+);
 const SELECTED_MIC_STORAGE_KEY = 'dis_lite_selected_mic';
 const SELECTED_SPEAKER_STORAGE_KEY = 'dis_lite_selected_speaker';
 const MIC_VOLUME_STORAGE_KEY = 'dis_lite_mic_volume';
@@ -2051,9 +2054,11 @@ export const VoiceProvider = ({ children }) => {
         setIsNativeScreenSharing(false);
         setIsScreenSharing(false);
         publishCallState({ screen: false, screenAudio: false });
-        console.error('[ScreenShare] Could not start native screen sharing:', error);
-        const message = typeof error === 'string' ? error : error?.message || String(error);
-        toast.error(`Could not start screen sharing: ${message}`);
+        if (!isScreenCaptureCancelled(error)) {
+          console.error('[ScreenShare] Could not start native screen sharing:', error);
+          const message = typeof error === 'string' ? error : error?.message || String(error);
+          toast.error(`Could not start screen sharing: ${message}`);
+        }
       }
       return;
     }
@@ -2145,7 +2150,8 @@ export const VoiceProvider = ({ children }) => {
         stopScreenShare().catch((error) => console.error('[ScreenShare] Stop failed:', error));
       };
     } catch (error) {
-      console.error('[toggleScreenShare]', error);
+      const wasCancelled = isScreenCaptureCancelled(error);
+      if (!wasCancelled) console.error('[toggleScreenShare]', error);
       if (screenStreamRef.current === stream) screenStreamRef.current = null;
       await Promise.all([
         unpublishLiveKitTrack('screen').catch((unpublishError) => {
@@ -2162,7 +2168,9 @@ export const VoiceProvider = ({ children }) => {
       screenAudioTrackRef.current = null;
       setIsScreenSharing(false);
       publishCallState({ screen: false, screenAudio: false });
-      toast.error('Could not start screen sharing. Check display-capture permission and try again.');
+      if (!wasCancelled) {
+        toast.error('Could not start screen sharing. Check display-capture permission and try again.');
+      }
     }
   };
 

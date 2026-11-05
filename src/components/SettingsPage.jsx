@@ -12,7 +12,6 @@ import {
   Keyboard,
   Monitor,
   Wifi,
-  Info,
   ChevronDown
 } from 'lucide-react';
 import { useVoice } from '../context/VoiceContext';
@@ -73,12 +72,23 @@ export default function SettingsPage({ onClose }) {
     : speakers.find((speaker) => speaker.deviceId === selectedSpeaker)?.label || 'Saved speaker unavailable';
 
   return (
-    <div className="fixed inset-0 z-[200] flex bg-[#111214] animate-in fade-in duration-150">
+    <div
+      className="settings-overlay-enter fixed inset-0 z-[200] flex items-center justify-center bg-black/80 p-3 backdrop-blur-sm sm:p-6"
+      onMouseDown={(event) => {
+        if (event.target === event.currentTarget) onClose();
+      }}
+    >
+      <section
+        role="dialog"
+        aria-modal="true"
+        aria-label="User settings"
+        className="settings-panel-enter relative flex h-[min(88vh,760px)] w-full max-w-[1120px] overflow-hidden rounded-xl border border-white/10 bg-[#0b0b0d] shadow-[0_24px_80px_rgba(0,0,0,0.8)]"
+      >
 
       {/* ─── Left Sidebar ─── */}
       <div
-        className="w-[236px] shrink-0 flex flex-col"
-        style={{ background: 'linear-gradient(to right, #1e1f22 0%, #1e1f22 100%)' }}
+        className="w-[190px] shrink-0 flex flex-col sm:w-[236px]"
+        style={{ background: '#070708' }}
       >
         {/* top spacer */}
         <div className="h-14" />
@@ -128,9 +138,9 @@ export default function SettingsPage({ onClose }) {
       <div className="w-px bg-[#2b2d31] shrink-0" />
 
       {/* ─── Content Area ─── */}
-      <div className="flex-1 flex flex-col bg-[#313338] min-w-0">
+      <div className="flex-1 flex flex-col bg-[#0b0b0d] min-w-0">
         <div className="flex-1 overflow-y-auto discord-scrollbar">
-          <div className="max-w-[740px] mx-auto px-10 pt-14 pb-16">
+          <div className="max-w-[740px] mx-auto px-5 pt-14 pb-12 sm:px-10 sm:pt-14 sm:pb-16">
 
             {/* ══════════════ VOICE & VIDEO ══════════════ */}
             {activeTab === 'voice' && (
@@ -313,15 +323,6 @@ export default function SettingsPage({ onClose }) {
                   </div>
                 )}
 
-                {/* Info note */}
-                <div className="mt-4 flex items-start gap-2.5 p-3.5 bg-[#2b2d31] rounded-lg border border-[#3f4147]">
-                  <Info size={14} className="text-[#5865f2] shrink-0 mt-0.5" />
-                  <p className="text-[12px] text-[#949ba4] leading-relaxed">
-                    Noise suppression runs entirely on your device using lightweight neural networks.
-                    Each participant filters their own microphone before sending it to the call; browser echo cancellation and noise suppression are also requested.
-                    Disable it on low-end devices if you notice high CPU usage.
-                  </p>
-                </div>
               </div>
             )}
 
@@ -378,7 +379,7 @@ export default function SettingsPage({ onClose }) {
       </div>
 
       {/* ─── Close Button (top-right) ─── */}
-      <div className="absolute top-4 right-6 flex flex-col items-center gap-1">
+      <div className="absolute right-4 top-3 z-10 flex flex-col items-center gap-1 sm:right-6">
         <button
           type="button"
           onClick={onClose}
@@ -389,6 +390,7 @@ export default function SettingsPage({ onClose }) {
         </button>
         <span className="text-[10px] text-[#80848e] select-none">ESC</span>
       </div>
+      </section>
     </div>
   );
 }

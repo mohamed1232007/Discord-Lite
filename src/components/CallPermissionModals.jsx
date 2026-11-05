@@ -78,8 +78,8 @@ export function ScreenSharePicker({
   const isNativePicker = Array.isArray(nativeSources);
 
   const tabs = useMemo(() => [
-    { id: 'screen', label: 'Screens', Icon: Monitor },
     { id: 'applications', label: 'Applications', Icon: AppWindow },
+    { id: 'screen', label: 'Entire Screen', Icon: Monitor },
   ], []);
 
   const visibleSources = useMemo(() => {
@@ -120,24 +120,24 @@ export function ScreenSharePicker({
   ];
 
   return (
-    <div className="fixed inset-0 z-[120] flex items-center justify-center bg-black/75 p-4 backdrop-blur-sm">
+    <div className="fixed inset-0 z-[120] flex items-center justify-center bg-black/80 p-3 backdrop-blur-sm sm:p-6">
       <section
         className={`flex max-h-[88vh] ${
-          isNativePicker ? 'w-[min(1100px,94vw)]' : 'w-[min(760px,94vw)]'
-        } flex-col overflow-hidden rounded-xl border border-[#2b2d31] bg-[#313338] text-white shadow-[0_24px_80px_rgba(0,0,0,0.7)]`}
+          isNativePicker ? 'w-[min(860px,94vw)]' : 'w-[min(680px,94vw)]'
+        } flex-col overflow-hidden rounded-2xl border border-white/[0.1] bg-black/85 text-white shadow-[0_28px_100px_rgba(0,0,0,0.8)] backdrop-blur-xl`}
         role="dialog"
         aria-modal="true"
         aria-labelledby="screen-share-title"
       >
-        <header className="px-4 pt-4 pb-0">
+        <header className="px-4 pt-4 sm:px-5 sm:pt-5">
           <div className="flex items-start justify-between">
             <div>
-              <h2 id="screen-share-title" className="text-base font-bold">Share your screen</h2>
-              <p className="mt-0.5 text-xs text-[#b5bac1]">Select what you'd like to share</p>
+              <h2 id="screen-share-title" className="text-lg font-bold tracking-tight">Share your screen</h2>
+              <p className="mt-1 text-xs text-[#949ba4]">Choose a screen or app to share with your call</p>
             </div>
             <button
               type="button"
-              className="flex h-8 w-8 items-center justify-center rounded-md text-[#b5bac1] transition hover:bg-[#3f4147] hover:text-white"
+              className="flex h-9 w-9 items-center justify-center rounded-lg text-[#949ba4] transition hover:bg-white/[0.08] hover:text-white"
               onClick={onCancel}
               aria-label="Close"
             >
@@ -148,35 +148,36 @@ export function ScreenSharePicker({
           </div>
 
           {isNativePicker && (
-            <nav className="mt-3 flex gap-1 border-b border-[#3f4147]" aria-label="Share source type">
+            <nav className="mt-5 grid grid-cols-2 gap-1 rounded-xl bg-[#0d0e10] p-1" aria-label="Share source type">
               {tabs.map(({ id, label, Icon }) => (
                 <button
                   key={id}
                   type="button"
                   onClick={() => setActiveTab(id)}
-                  className={`relative flex items-center gap-1.5 px-3 py-2 text-sm font-medium transition ${
+                  className={`flex min-h-10 items-center justify-center gap-2 rounded-lg px-3 py-2 text-sm font-semibold transition ${
                     activeTab === id
-                      ? 'text-white'
-                      : 'text-[#949ba4] hover:text-[#dbdee1]'
+                      ? 'bg-[#303136] text-white shadow-sm'
+                      : 'text-[#949ba4] hover:bg-white/[0.04] hover:text-[#dbdee1]'
                   }`}
                   aria-pressed={activeTab === id}
                 >
                   <Icon size={15} />
                   {label}
-                  {activeTab === id && (
-                    <span className="absolute bottom-0 left-0 right-0 h-0.5 rounded-t-full bg-[#5865f2]" />
-                  )}
                 </button>
               ))}
             </nav>
           )}
         </header>
 
-        <main className={`min-h-0 overflow-y-auto p-4 discord-scrollbar ${isNativePicker ? 'flex-1' : ''}`}>
+        <main className={`min-h-0 overflow-y-auto px-4 py-4 discord-scrollbar sm:px-5 sm:py-5 ${isNativePicker ? 'flex-1' : ''}`}>
           {isNativePicker ? (
             <>
-              {sourcesError && <p role="alert" className="mb-3 text-xs text-[#f23f43]">{sourcesError}</p>}
-              <div className="grid grid-cols-1 gap-4 sm:grid-cols-2" aria-live="polite">
+              {sourcesError && (
+                <p role="alert" className="mb-4 rounded-lg border border-[#f23f43]/25 bg-[#f23f43]/10 px-3 py-2 text-xs text-[#ff8b8e]">
+                  {sourcesError}
+                </p>
+              )}
+              <div className="grid grid-cols-1 gap-3 sm:grid-cols-2 sm:gap-4" aria-live="polite">
                 {visibleSources.map((source) => {
                   const SourceIcon = source.kind === 'monitor' ? Monitor : AppWindow;
                   const isSelected = (selectedSource?.id || selectedSourceId) === source.id;
@@ -197,14 +198,14 @@ export function ScreenSharePicker({
                       type="button"
                       disabled={sourcesLoading}
                       onClick={() => setSelectedSourceId(source.id)}
-                      className={`group overflow-hidden rounded-lg border-2 text-left transition disabled:opacity-50 ${
+                      className={`group overflow-hidden rounded-xl border text-left transition disabled:opacity-50 ${
                         isSelected
-                          ? 'border-[#5865f2] bg-[#5865f2]/5'
-                          : 'border-transparent hover:border-[#4e5058]'
+                          ? 'border-[#5865f2] bg-[#5865f2]/[0.08] ring-1 ring-[#5865f2]/40'
+                          : 'border-white/[0.08] bg-[#202126] hover:border-white/20 hover:bg-[#25262c]'
                       }`}
                       aria-pressed={isSelected}
                     >
-                      <div ref={previewRef} className="relative flex aspect-video items-center justify-center overflow-hidden rounded-t bg-[#1e1f22]">
+                      <div ref={previewRef} className="relative flex aspect-video items-center justify-center overflow-hidden bg-[#0b0c0e]">
                         {preview ? (
                           <img
                             src={preview}
@@ -217,24 +218,26 @@ export function ScreenSharePicker({
                           </div>
                         )}
                         {isSelected && (
-                          <span className="absolute right-2 top-2 flex h-5 w-5 items-center justify-center rounded-full bg-[#5865f2]">
-                            <Check size={13} />
+                          <span className="absolute right-2 top-2 flex h-6 w-6 items-center justify-center rounded-full bg-[#5865f2] text-white shadow-lg">
+                            <Check size={14} strokeWidth={3} />
                           </span>
                         )}
+                        <span className="absolute inset-x-0 bottom-0 h-10 bg-gradient-to-t from-black/50 to-transparent" />
                       </div>
-                      <div className="flex items-center gap-2 px-3 py-2">
-                        <SourceIcon size={14} className="shrink-0 text-[#949ba4]" />
-                        <span className="truncate text-xs font-medium">{source.name}</span>
+                      <div className="flex min-h-11 items-center gap-2.5 px-3 py-2">
+                        <SourceIcon size={15} className={`shrink-0 ${isSelected ? 'text-[#aeb8ff]' : 'text-[#949ba4]'}`} />
+                        <span className="min-w-0 flex-1 truncate text-sm font-semibold">{source.name}</span>
+                        {isSelected && <span className="text-[10px] font-bold uppercase tracking-wide text-[#aeb8ff]">Selected</span>}
                       </div>
                     </button>
                   );
                 })}
               </div>
               {sourcesLoading && (
-                <p className="py-6 text-center text-xs text-[#b5bac1]" role="status">Loading sources…</p>
+                <p className="py-10 text-center text-sm text-[#949ba4]" role="status">Loading sources…</p>
               )}
               {!sourcesLoading && visibleSources.length === 0 && !sourcesError && (
-                <p className="py-6 text-center text-xs text-[#b5bac1]">
+                <p className="py-10 text-center text-sm text-[#949ba4]">
                   No {activeTab === 'applications' ? 'application windows' : 'displays'} found.
                 </p>
               )}
@@ -255,9 +258,9 @@ export function ScreenSharePicker({
           )}
         </main>
 
-        <footer className="flex items-center justify-between border-t border-[#3f4147] px-4 py-3">
-          <div className="flex items-center gap-2">
-            <div className="flex items-center gap-1 rounded-md bg-[#2b2d31] p-0.5">
+        <footer className="flex flex-col gap-3 border-t border-white/[0.08] bg-black/35 px-4 py-3 sm:flex-row sm:items-center sm:justify-between sm:px-5">
+          <div className="flex flex-wrap items-center gap-2">
+            <div className="flex items-center gap-1 rounded-lg bg-[#25262b] p-1">
               {qualityPresets.map(({ value, label }) => (
                 <button
                   key={value}
@@ -265,7 +268,7 @@ export function ScreenSharePicker({
                   onClick={() => setQuality(value)}
                   className={`rounded px-2.5 py-1 text-xs font-semibold transition ${
                     quality === value
-                      ? 'bg-[#5865f2] text-white'
+                      ? 'bg-[#5865f2] text-white shadow-sm'
                       : 'text-[#949ba4] hover:text-white'
                   }`}
                   aria-pressed={quality === value}
@@ -275,9 +278,9 @@ export function ScreenSharePicker({
               ))}
             </div>
 
-            <div className="mx-1 h-4 w-px bg-[#3f4147]" />
+            <div className="mx-0.5 hidden h-5 w-px bg-white/10 sm:block" />
 
-            <div className="flex items-center gap-1 rounded-md bg-[#2b2d31] p-0.5">
+            <div className="flex items-center gap-1 rounded-lg bg-[#25262b] p-1">
               {fpsPresets.map(({ value, label }) => (
                 <button
                   key={value}
@@ -285,7 +288,7 @@ export function ScreenSharePicker({
                   onClick={() => setFrameRate(value)}
                   className={`rounded px-2 py-1 text-xs font-semibold transition ${
                     frameRate === value
-                      ? 'bg-[#5865f2] text-white'
+                      ? 'bg-[#5865f2] text-white shadow-sm'
                       : 'text-[#949ba4] hover:text-white'
                   }`}
                   aria-pressed={frameRate === value}
@@ -295,14 +298,14 @@ export function ScreenSharePicker({
               ))}
             </div>
 
-            <div className="mx-1 h-4 w-px bg-[#3f4147]" />
+            <div className="mx-0.5 hidden h-5 w-px bg-white/10 sm:block" />
             <button
               type="button"
               role="switch"
               aria-checked={includeSystemAudio}
               onClick={() => setIncludeSystemAudio((v) => !v)}
               className={`flex items-center gap-1.5 rounded-md px-2.5 py-1.5 text-xs font-semibold transition ${
-                includeSystemAudio ? 'bg-[#23a55a]/15 text-[#57f287]' : 'bg-[#2b2d31] text-[#b5bac1]'
+                includeSystemAudio ? 'bg-[#23a55a]/15 text-[#57f287]' : 'bg-[#25262b] text-[#b5bac1]'
               }`}
             >
               <Volume2 size={13} />
@@ -310,10 +313,10 @@ export function ScreenSharePicker({
             </button>
             {isNativePicker && (
               <>
-                <div className="mx-1 h-4 w-px bg-[#3f4147]" />
+                <div className="mx-0.5 hidden h-5 w-px bg-white/10 sm:block" />
                 <button
                   type="button"
-                  className="flex items-center gap-1.5 rounded-md bg-[#2b2d31] px-2.5 py-1.5 text-xs font-medium text-[#b5bac1] transition hover:text-white disabled:opacity-50"
+                  className="flex items-center gap-1.5 rounded-lg bg-[#25262b] px-2.5 py-2 text-xs font-medium text-[#b5bac1] transition hover:text-white disabled:opacity-50"
                   onClick={onRefreshSources}
                   disabled={sourcesLoading}
                 >
@@ -323,17 +326,17 @@ export function ScreenSharePicker({
               </>
             )}
           </div>
-          <div className="flex items-center gap-2">
+          <div className="flex items-center justify-end gap-2">
             <button
               type="button"
-              className="rounded-md px-4 py-1.5 text-sm font-medium text-[#dbdee1] transition hover:underline"
+              className="rounded-lg px-4 py-2 text-sm font-semibold text-[#b5bac1] transition hover:bg-white/[0.06] hover:text-white"
               onClick={onCancel}
             >
               Cancel
             </button>
             <button
               type="button"
-              className="rounded-md bg-[#5865f2] px-4 py-1.5 text-sm font-semibold text-white transition hover:bg-[#4752c4] disabled:opacity-50"
+              className="rounded-lg bg-[#5865f2] px-5 py-2 text-sm font-bold text-white shadow-lg shadow-[#5865f2]/15 transition hover:bg-[#4752c4] disabled:cursor-not-allowed disabled:opacity-50"
               onClick={startSharing}
               disabled={isNativePicker && (!selectedSource || sourcesLoading)}
             >
