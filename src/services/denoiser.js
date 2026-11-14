@@ -49,16 +49,17 @@ export const DENOISE_SETTINGS = {
       gateCloseDb: -58,
       speechDelayMs: 60,
       highShelfHz: 10000,
-      highShelfGainDb: -4,
-      clarityHz: 3000,
-      clarityGainDb: 3,
-      clarityQ: 1.2,
-      warmthHz: 250,
-      warmthGainDb: 3,
+      highShelfGainDb: -1.5,
+      clarityHz: 2800,
+      clarityGainDb: 3.5,
+      clarityQ: 1.1,
+      warmthHz: 180,
+      warmthGainDb: 4,
       warmthQ: 0.8,
-      presenceHz: 5000,
-      presenceGainDb: 1.5,
+      presenceHz: 4500,
+      presenceGainDb: 2,
       presenceQ: 1,
+      makeupGain: 1.75,
       voiceActivityDetector: true,
     },
   },
@@ -436,7 +437,12 @@ export class DenoiseEngine {
         compressor.release.value = 0.12;
         created.push(compressor);
         presence.connect(compressor);
-        compressor.connect(gain);
+
+        const outputGain = ctx.createGain();
+        outputGain.gain.value = config.makeupGain;
+        created.push(outputGain);
+        compressor.connect(outputGain);
+        outputGain.connect(gain);
 
         vad = await createSileroVad(vadMonitor.stream, ctx, (speechDetected) => {
           if (ctx.state === 'closed') return;
