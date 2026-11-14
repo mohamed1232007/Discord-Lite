@@ -1,8 +1,9 @@
 import { useState } from 'react';
 import { useAuth } from '../context/AuthContext';
 import { useToast } from '../context/ToastContext';
+import { UpdateActionButton } from './DiscordUpdater';
 
-export default function LoginPage({ onBackToLanding, onSuccess }) {
+export default function LoginPage({ onBackToLanding, onSuccess, deferredUpdate, onOpenUpdate }) {
   const { signIn, signUp } = useAuth();
   const toast = useToast();
 
@@ -83,6 +84,9 @@ export default function LoginPage({ onBackToLanding, onSuccess }) {
           </div>
         )}
       </header>
+      <div className="absolute right-8 top-8 z-20">
+        <UpdateActionButton visible={deferredUpdate} onClick={onOpenUpdate} />
+      </div>
 
       {/* ── Main Modal Card (طابق 100% مع الصورة) ── */}
       <div className="relative z-10 w-full max-w-[784px] mx-4 bg-[#313338] text-[#dbdee1] rounded-lg shadow-[0_2px_10px_0_rgba(0,0,0,0.2)] p-8 flex flex-col md:flex-row gap-8 items-center transition-all duration-300">

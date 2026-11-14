@@ -12,8 +12,9 @@ import {
 } from 'lucide-react';
 import { useAuth } from '../context/AuthContext';
 import heroImg from '../assets/discord-landing-hero.png';
+import { UpdateActionButton } from './DiscordUpdater';
 
-export default function LandingPage({ onOpenApp, onOpenLogin }) {
+export default function LandingPage({ onOpenApp, onOpenLogin, deferredUpdate, onOpenUpdate }) {
   const { user } = useAuth();
 
   const handleOpenDiscord = () => {
@@ -72,6 +73,7 @@ export default function LandingPage({ onOpenApp, onOpenLogin }) {
 
         {/* Right CTA Button: Open Discord */}
         <div className="flex items-center gap-3">
+          <UpdateActionButton visible={deferredUpdate} onClick={onOpenUpdate} />
           <button
             type="button"
             onClick={handleOpenDiscord}

@@ -12,8 +12,9 @@ import {
 } from 'lucide-react';
 import { useAuth } from '../context/AuthContext';
 import { BACKEND_URL } from '../services/backendUrl';
+import { UpdateActionButton } from './DiscordUpdater';
 
-export default function FriendsView({ onStartChat }) {
+export default function FriendsView({ onStartChat, deferredUpdate, onOpenUpdate }) {
   const { token, onlineUsers } = useAuth();
   const [tab, setTab] = useState('online');
   const [friends, setFriends] = useState([]);
@@ -238,6 +239,7 @@ export default function FriendsView({ onStartChat }) {
           <button className="hover:text-white p-1" title="Help">
             <HelpCircle size={20} />
           </button>
+          <UpdateActionButton visible={deferredUpdate} onClick={onOpenUpdate} />
         </div>
       </div>
 

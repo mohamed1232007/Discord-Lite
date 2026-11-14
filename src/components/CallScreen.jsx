@@ -20,6 +20,7 @@ import { useAuth } from '../context/AuthContext';
 import { useToast } from '../context/ToastContext';
 import { BACKEND_URL } from '../services/backendUrl';
 import { formatCallDuration } from '../utils/formatCallDuration';
+import { UpdateActionButton } from './DiscordUpdater';
 
 const createParticipantAudioPipeline = (context, track, volume) => {
   const source = context.createMediaStreamSource(new MediaStream([track]));
@@ -47,7 +48,7 @@ const disposeParticipantAudioPipeline = (pipeline) => {
   pipeline.limiter.disconnect();
 };
 
-export default function CallScreen({ onOpenChat }) {
+export default function CallScreen({ onOpenChat, deferredUpdate, onOpenUpdate }) {
   const {
     activeCall,
     callParticipants,
@@ -567,6 +568,7 @@ export default function CallScreen({ onOpenChat }) {
           >
             <MessageSquare size={18} />
           </button>
+          <UpdateActionButton visible={deferredUpdate} onClick={onOpenUpdate} />
         </div>
       </div>
 

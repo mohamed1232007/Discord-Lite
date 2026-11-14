@@ -15,6 +15,7 @@ import { useAuth } from '../context/AuthContext';
 import { useVoice } from '../context/VoiceContext';
 import { useToast } from '../context/ToastContext';
 import { BACKEND_URL } from '../services/backendUrl';
+import { UpdateActionButton } from './DiscordUpdater';
 
 const PAGE_SIZE = 100;
 
@@ -24,7 +25,7 @@ const sortByCreatedAt = (a, b) => {
   return String(a.id).localeCompare(String(b.id));
 };
 
-export default function ChatView({ user, onBack, onCallStarted }) {
+export default function ChatView({ user, onBack, onCallStarted, deferredUpdate, onOpenUpdate }) {
   const { user: currentUser, token, onlineUsers } = useAuth();
   const { startCall } = useVoice();
   const toast = useToast();
@@ -260,6 +261,7 @@ export default function ChatView({ user, onBack, onCallStarted }) {
           <button className="hover:text-white p-2 hover:bg-[#111214] rounded-full transition" title="Help">
             <HelpCircle size={19} />
           </button>
+          <UpdateActionButton visible={deferredUpdate} onClick={onOpenUpdate} />
         </div>
       </div>
 
