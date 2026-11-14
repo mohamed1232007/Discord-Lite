@@ -42,8 +42,8 @@ const getSavedParticipantAudio = () => {
           userId,
           {
             volume: Number.isFinite(settings.volume)
-              ? Math.min(3, Math.max(0, settings.volume))
-              : 1.5,
+              ? Math.min(2, Math.max(0, settings.volume))
+              : 1,
             muted: settings.muted === true,
           },
         ]),
@@ -66,8 +66,8 @@ const getSavedStreamAudio = () => {
           userId,
           {
             volume: Number.isFinite(settings.volume)
-              ? Math.min(3, Math.max(0, settings.volume))
-              : 1.5,
+              ? Math.min(1, Math.max(0, settings.volume))
+              : 1,
             muted: settings.muted === true,
           },
         ]),
@@ -725,7 +725,7 @@ export const VoiceProvider = ({ children }) => {
   // مستوى صوت مشاركة الشاشة (زي الدسكورد) — بيتحفظ في localStorage لكل مستخدم.
   const setStreamVolume = (userId, volume) => {
     if (!userId || !Number.isFinite(volume)) return;
-    const nextVolume = Math.min(3, Math.max(0, volume));
+    const nextVolume = Math.min(1, Math.max(0, volume));
     setStreamAudioSettings((previous) => ({
       ...previous,
       [userId]: {
@@ -740,7 +740,7 @@ export const VoiceProvider = ({ children }) => {
     setStreamAudioSettings((previous) => ({
       ...previous,
       [userId]: {
-        volume: previous[userId]?.volume ?? 1.5,
+        volume: previous[userId]?.volume ?? 1,
         muted: !!muted,
       },
     }));
@@ -748,7 +748,7 @@ export const VoiceProvider = ({ children }) => {
 
   const setParticipantVolume = (participantId, volume) => {
     if (!participantId || !Number.isFinite(volume)) return;
-    const nextVolume = Math.min(3, Math.max(0, volume));
+    const nextVolume = Math.min(2, Math.max(0, volume));
     setParticipantAudioSettings((previous) => ({
       ...previous,
       [participantId]: {

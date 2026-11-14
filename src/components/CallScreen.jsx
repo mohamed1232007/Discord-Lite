@@ -22,48 +22,30 @@ import { BACKEND_URL } from '../services/backendUrl';
 import { formatCallDuration } from '../utils/formatCallDuration';
 import { UpdateActionButton } from './DiscordUpdater';
 
-const createParticipantAudioPipeline = (context, stream, track, volume) => {
-  const nodes = [];
-  try {
-    const source = context.createMediaStreamSource(stream);
-    nodes.push(source);
-    const gain = context.createGain();
-    nodes.push(gain);
-    const limiter = context.createDynamicsCompressor();
-    nodes.push(limiter);
+const createParticipantAudioPipeline = (context, track, volume) => {
+  const source = context.createMediaStreamSource(new MediaStream([track]));
+  const gain = context.createGain();
+  const limiter = context.createDynamicsCompressor();
+  const destination = context.createMediaStreamDestination();
 
-    gain.gain.value = volume;
-    limiter.threshold.value = -6;
-    limiter.knee.value = 0;
-    limiter.ratio.value = 12;
-    limiter.attack.value = 0.003;
-    limiter.release.value = 0.15;
+  gain.gain.value = volume;
+  limiter.threshold.value = -1;
+  limiter.knee.value = 0;
+  limiter.ratio.value = 20;
+  limiter.attack.value = 0.003;
+  limiter.release.value = 0.15;
 
-    source.connect(gain);
-    gain.connect(limiter);
-    limiter.connect(context.destination);
+  source.connect(gain);
+  gain.connect(limiter);
+  limiter.connect(destination);
 
-    return { track, context, source, gain, limiter };
-  } catch (error) {
-    nodes.forEach((node) => {
-      try {
-        node.disconnect();
-      } catch {
-        // The node may not have been connected.
-      }
-    });
-    throw error;
-  }
+  return { track, context, source, gain, limiter, destination };
 };
 
 const disposeParticipantAudioPipeline = (pipeline) => {
-  [pipeline.source, pipeline.gain, pipeline.limiter].forEach((node) => {
-    try {
-      node.disconnect();
-    } catch {
-      // The node may already be disconnected.
-    }
-  });
+  pipeline.source.disconnect();
+  pipeline.gain.disconnect();
+  pipeline.limiter.disconnect();
 };
 
 export default function CallScreen({ onOpenChat, deferredUpdate, onOpenUpdate }) {
@@ -184,6 +166,8 @@ export default function CallScreen({ onOpenChat, deferredUpdate, onOpenUpdate })
   }, [callStatus, isRemoteScreenSharing, isRemoteCamera, remoteVideoRef, remoteStreamRef]);
 
   useEffect(() => {
+    const activeParticipantIds = new Set(remoteStreams.map(({ userId }) => userId));
+
     remoteStreams.forEach(({ userId, microphoneTrack, screenAudioTrack }) => {
       const participantSettings = participantAudioSettings[userId];
       const streamSettings = streamAudioSettings[userId];
@@ -192,91 +176,80 @@ export default function CallScreen({ onOpenChat, deferredUpdate, onOpenUpdate })
           element: remoteAudioElementsRef.current.get(userId),
           track: microphoneTrack,
           settings: participantSettings,
-          pipelineKey: `${userId}:microphone`,
+          isVoice: true,
         },
         {
           element: remoteScreenAudioElementsRef.current.get(userId),
           track: screenAudioTrack,
           settings: streamSettings,
-          pipelineKey: `${userId}:screenAudio`,
+          isVoice: false,
         },
       ];
 
-      audioElements.forEach(({ element, track, settings, pipelineKey }) => {
-        const pipeline = participantAudioPipelinesRef.current.get(pipelineKey);
-        if (!track) {
-          if (pipeline) {
-            disposeParticipantAudioPipeline(pipeline);
-            participantAudioPipelinesRef.current.delete(pipelineKey);
-          }
-          participantAudioErrorsRef.current.delete(pipelineKey);
-          if (element) {
+      audioElements.forEach(({ element, track, settings, isVoice }) => {
+        if (!element) return;
+
+        if (isVoice) {
+          let pipeline = participantAudioPipelinesRef.current.get(userId);
+          if (!track) {
+            if (pipeline) {
+              disposeParticipantAudioPipeline(pipeline);
+              participantAudioPipelinesRef.current.delete(userId);
+            }
             element.srcObject = null;
-            element.muted = true;
+            return;
           }
-          return;
-        }
-        if (!element) {
-          if (pipeline) {
-            disposeParticipantAudioPipeline(pipeline);
-            participantAudioPipelinesRef.current.delete(pipelineKey);
-          }
-          return;
-        }
 
-        const stream = new MediaStream([track]);
-        let currentPipeline = pipeline;
-        if (!currentPipeline || currentPipeline.track.id !== track.id) {
-          if (currentPipeline) {
-            disposeParticipantAudioPipeline(currentPipeline);
-            participantAudioPipelinesRef.current.delete(pipelineKey);
-            currentPipeline = null;
-          }
-          try {
-            let audioContext = participantAudioContextRef.current;
-            if (!audioContext || audioContext.state === 'closed') {
-              const AudioContextConstructor = window.AudioContext || window.webkitAudioContext;
-              if (!AudioContextConstructor) {
-                throw new Error('Web Audio API is not supported.');
+          if (!pipeline || pipeline.track.id !== track.id) {
+            if (pipeline) {
+              disposeParticipantAudioPipeline(pipeline);
+              participantAudioPipelinesRef.current.delete(userId);
+            }
+            try {
+              let audioContext = participantAudioContextRef.current;
+              if (!audioContext) {
+                const AudioContextConstructor = window.AudioContext || window.webkitAudioContext;
+                if (!AudioContextConstructor) {
+                  throw new Error('Web Audio API is not supported.');
+                }
+                audioContext = new AudioContextConstructor({ latencyHint: 'interactive' });
+                participantAudioContextRef.current = audioContext;
               }
-              audioContext = new AudioContextConstructor({ latencyHint: 'interactive' });
-              participantAudioContextRef.current = audioContext;
+              pipeline = createParticipantAudioPipeline(audioContext, track, settings?.volume ?? 1);
+              participantAudioPipelinesRef.current.set(userId, pipeline);
+              participantAudioErrorsRef.current.delete(userId);
+              element.srcObject = pipeline.destination.stream;
+            } catch (error) {
+              console.error('[Audio] Could not amplify participant audio:', error);
+              if (!participantAudioErrorsRef.current.has(userId)) {
+                toast.error('Could not apply this user’s volume boost; normal volume is being used.');
+                participantAudioErrorsRef.current.add(userId);
+              }
+              element.srcObject = new MediaStream([track]);
             }
-            const volume = settings?.volume ?? 1.5;
-            currentPipeline = createParticipantAudioPipeline(
-              audioContext,
-              stream,
-              track,
-              isDeafened || settings?.muted ? 0 : volume,
+          } else {
+            pipeline.gain.gain.setTargetAtTime(
+              settings?.volume ?? 1,
+              pipeline.context.currentTime,
+              0.02,
             );
-            participantAudioPipelinesRef.current.set(pipelineKey, currentPipeline);
-            participantAudioErrorsRef.current.delete(pipelineKey);
-          } catch (error) {
-            console.error('[Audio] Could not amplify participant audio:', error);
-            if (!participantAudioErrorsRef.current.has(pipelineKey)) {
-              toast.error('Could not apply this user’s volume boost; normal volume is being used.');
-              participantAudioErrorsRef.current.add(pipelineKey);
-            }
-            element.srcObject = stream;
-            element.muted = isDeafened || settings?.muted === true;
-            element.volume = Math.min(1, Math.max(0, settings?.volume ?? 1.5));
+            element.srcObject = pipeline.destination.stream;
           }
-        } else {
-          currentPipeline.gain.gain.value = isDeafened || settings?.muted
-            ? 0
-            : settings?.volume ?? 1.5;
-        }
-
-        if (currentPipeline) {
-          element.srcObject = stream;
-          element.muted = true;
-          element.volume = 0;
-          if (currentPipeline.context.state === 'suspended') {
-            currentPipeline.context.resume().catch((error) => {
+          pipeline = participantAudioPipelinesRef.current.get(userId);
+          if (pipeline?.context.state === 'suspended') {
+            pipeline.context.resume().catch((error) => {
               console.warn('[Audio] Could not resume participant audio amplification:', error);
             });
           }
+          element.volume = 1;
+        } else {
+          const audioStream = track ? new MediaStream([track]) : null;
+          if (element.srcObject?.getAudioTracks?.()[0]?.id !== track?.id) {
+            element.srcObject = audioStream;
+          }
+          element.volume = settings?.muted ? 0 : settings?.volume ?? 1;
         }
+        element.muted = isDeafened || settings?.muted === true;
         if (typeof element.setSinkId === 'function') {
           element.setSinkId(selectedSpeaker === 'default' ? '' : selectedSpeaker)
             .catch((error) => console.warn('[Audio] Could not set output device:', error));
@@ -287,19 +260,11 @@ export default function CallScreen({ onOpenChat, deferredUpdate, onOpenUpdate })
       });
     });
 
-    const activePipelineKeys = new Set(remoteStreams.flatMap(({
-      userId,
-      microphoneTrack,
-      screenAudioTrack,
-    }) => [
-      ...(microphoneTrack ? [`${userId}:microphone`] : []),
-      ...(screenAudioTrack ? [`${userId}:screenAudio`] : []),
-    ]));
-    participantAudioPipelinesRef.current.forEach((pipeline, pipelineKey) => {
-      if (!activePipelineKeys.has(pipelineKey)) {
+    participantAudioPipelinesRef.current.forEach((pipeline, userId) => {
+      if (!activeParticipantIds.has(userId)) {
         disposeParticipantAudioPipeline(pipeline);
-        participantAudioPipelinesRef.current.delete(pipelineKey);
-        participantAudioErrorsRef.current.delete(pipelineKey);
+        participantAudioPipelinesRef.current.delete(userId);
+        participantAudioErrorsRef.current.delete(userId);
       }
     });
   }, [
@@ -312,23 +277,6 @@ export default function CallScreen({ onOpenChat, deferredUpdate, onOpenUpdate })
     streamAudioSettings,
     toast,
   ]);
-
-  useEffect(() => {
-    const resumeAudioContext = () => {
-      const audioContext = participantAudioContextRef.current;
-      if (audioContext?.state === 'suspended') {
-        audioContext.resume().catch((error) => {
-          console.warn('[Audio] Could not resume participant audio context after interaction:', error);
-        });
-      }
-    };
-    document.addEventListener('pointerdown', resumeAudioContext, true);
-    document.addEventListener('keydown', resumeAudioContext, true);
-    return () => {
-      document.removeEventListener('pointerdown', resumeAudioContext, true);
-      document.removeEventListener('keydown', resumeAudioContext, true);
-    };
-  }, []);
 
   useEffect(() => () => {
     participantAudioPipelinesRef.current.forEach(disposeParticipantAudioPipeline);
@@ -380,7 +328,7 @@ export default function CallScreen({ onOpenChat, deferredUpdate, onOpenUpdate })
     && remoteCallStates[remoteScreenParticipant.user_id]?.screenAudio === true;
   const remoteScreenAudioVolume = Number.isFinite(remoteScreenAudioSettings.volume)
     ? remoteScreenAudioSettings.volume
-    : 1.5;
+    : 1;
   const remoteCameraParticipants = activeParticipants.filter((participant) => (
     participant.user_id !== currentUser?.id && remoteCallStates[participant.user_id]?.camera
   ));
@@ -421,9 +369,9 @@ export default function CallScreen({ onOpenChat, deferredUpdate, onOpenUpdate })
     if (participant.user_id === currentUser?.id) return null;
 
     const settings = participantAudioSettings[participant.user_id] || {};
-    const volume = Number.isFinite(settings.volume) ? Math.min(3, Math.max(0, settings.volume)) : 1.5;
+    const volume = Number.isFinite(settings.volume) ? Math.min(2, Math.max(0, settings.volume)) : 1;
     const volumePercent = Math.round(volume * 100);
-    const volumeFillPercent = Math.min(100, volumePercent / 3);
+    const volumeFillPercent = Math.min(100, volumePercent / 2);
     const isMutedForMe = settings.muted === true;
     const isOpen = openParticipantMenuId === participant.user_id;
     const menu = isOpen && participantMenuPosition
@@ -470,7 +418,7 @@ export default function CallScreen({ onOpenChat, deferredUpdate, onOpenUpdate })
               id={`participant-volume-${participant.user_id}`}
               type="range"
               min="0"
-              max="300"
+              max="200"
               step="1"
               value={volumePercent}
               onChange={(event) => setParticipantVolume(participant.user_id, Number(event.target.value) / 100)}
@@ -569,7 +517,6 @@ export default function CallScreen({ onOpenChat, deferredUpdate, onOpenUpdate })
           <div key={userId}>
             <audio
               autoPlay
-              muted
               playsInline
               ref={(element) => {
                 if (element) {
@@ -586,7 +533,6 @@ export default function CallScreen({ onOpenChat, deferredUpdate, onOpenUpdate })
             />
             <audio
               autoPlay
-              muted
               playsInline
               ref={(element) => {
                 if (element) remoteScreenAudioElementsRef.current.set(userId, element);
@@ -686,7 +632,7 @@ export default function CallScreen({ onOpenChat, deferredUpdate, onOpenUpdate })
                         <input
                           type="range"
                           min="0"
-                          max="300"
+                          max="100"
                           step="1"
                           value={Math.round(remoteScreenAudioVolume * 100)}
                           onChange={(event) => setStreamVolume(
@@ -695,7 +641,7 @@ export default function CallScreen({ onOpenChat, deferredUpdate, onOpenUpdate })
                           )}
                           className="participant-volume-slider mb-3 w-full cursor-pointer"
                           style={{
-                            background: `linear-gradient(to right, #5865f2 0%, #5865f2 ${Math.min(100, remoteScreenAudioVolume * 100 / 3)}%, #3b3d44 ${Math.min(100, remoteScreenAudioVolume * 100 / 3)}%, #3b3d44 100%)`,
+                            background: `linear-gradient(to right, #5865f2 0%, #5865f2 ${remoteScreenAudioVolume * 100}%, #3b3d44 ${remoteScreenAudioVolume * 100}%, #3b3d44 100%)`,
                           }}
                           aria-label="Stream audio volume"
                         />
