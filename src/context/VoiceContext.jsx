@@ -22,12 +22,13 @@ const PARTICIPANT_AUDIO_STORAGE_KEY = 'dis_lite_participant_audio';
 const STREAM_AUDIO_STORAGE_KEY = 'dis_lite_stream_audio';
 const MEDIA_PERMISSION_STORAGE_KEY = 'dis_lite_media_permission_grants';
 const NOISE_LEVEL_STORAGE_KEY = 'dis_lite_noise_level';
-const NOISE_LEVELS = ['standard', 'strong', 'max', 'voiceFocus'];
+const NOISE_LEVELS = ['standard', 'strong', 'max', 'voiceFocus', 'ai-noise'];
 const NOISE_LEVEL_LABELS = {
   standard: 'Standard',
   strong: 'Strong',
   max: 'Maximum',
   voiceFocus: 'Voice Focus (Silero VAD)',
+  'ai-noise': 'AI Noise',
 };
 
 const getSavedParticipantAudio = () => {

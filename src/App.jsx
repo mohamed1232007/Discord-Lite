@@ -22,8 +22,7 @@ function LoadingScreen() {
       <div aria-hidden="true" className="loading-orb loading-orb-two pointer-events-none absolute bottom-[8%] right-[12%] h-72 w-72 rounded-full bg-[#8b5cf6]/[0.12] blur-[110px]" />
       <div aria-hidden="true" className="loading-orb loading-orb-three pointer-events-none absolute right-[22%] top-[12%] h-44 w-44 rounded-full bg-[#67e8f9]/[0.08] blur-[90px]" />
 
-      <div className="loading-glass-card relative w-full max-w-[390px] overflow-hidden rounded-[28px] border border-white/[0.12] bg-white/[0.055] px-8 py-9 shadow-[0_28px_90px_rgba(0,0,0,0.6)] backdrop-blur-2xl">
-        <div className="pointer-events-none absolute inset-x-8 top-0 h-px bg-gradient-to-r from-transparent via-white/25 to-transparent" />
+      <div className="loading-glass-card relative w-full max-w-[390px] overflow-hidden rounded-[28px] bg-white/[0.055] px-8 py-9 shadow-[0_28px_90px_rgba(0,0,0,0.6)] backdrop-blur-2xl">
         <div className="relative flex flex-col items-center gap-8">
           <div className="flex items-center justify-center gap-4">
             <div className="flex h-16 w-16 shrink-0 items-center justify-center rounded-[22px] border border-white/20 bg-gradient-to-br from-[#7884ff] to-[#5865f2] shadow-[0_8px_28px_rgba(88,101,242,0.32)]">

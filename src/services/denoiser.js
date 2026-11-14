@@ -62,6 +62,31 @@ export const DENOISE_SETTINGS = {
       makeupGain: 1.75,
       voiceActivityDetector: true,
     },
+    'ai-noise': {
+      stages: ['gtcrn-custom'],
+      highpassHz: 100,
+      gateOpenDb: -52,
+      gateCloseDb: -58,
+      speechDelayMs: 60,
+      highShelfHz: 10000,
+      highShelfGainDb: -1.5,
+      clarityHz: 2800,
+      clarityGainDb: 3.5,
+      clarityQ: 1.1,
+      warmthHz: 180,
+      warmthGainDb: 4,
+      warmthQ: 0.8,
+      presenceHz: 4500,
+      presenceGainDb: 2,
+      presenceQ: 1,
+      makeupGain: 1.75,
+      voiceActivityDetector: true,
+      vad: {
+        positiveSpeechThreshold: 0.75,
+        negativeSpeechThreshold: 0.55,
+        redemptionMs: 80,
+      },
+    },
   },
 };
 
@@ -70,10 +95,12 @@ const FALLBACK_LEVELS = {
   strong: ['strong', 'standard'],
   standard: ['standard'],
   voiceFocus: ['voiceFocus'],
+  'ai-noise': ['ai-noise'],
 };
 
 let rnnoiseBinaryPromise = null;
 let gtcrnBinaryPromise = null;
+let customGtcrnBinaryPromise = null;
 
 const getRnnoiseWasmBinary = () => {
   if (!rnnoiseBinaryPromise) {
@@ -98,13 +125,41 @@ const getGtcrnWasmBinary = () => {
   return gtcrnBinaryPromise;
 };
 
-export const preloadDenoiser = (level = 'standard') => (
-  DENOISE_SETTINGS.levels[level]?.stages.includes('gtcrn')
-    ? getGtcrnWasmBinary()
-    : getRnnoiseWasmBinary()
+const getCustomGtcrnWasmBinary = () => {
+  if (!customGtcrnBinaryPromise) {
+    const url = new URL(
+      `${import.meta.env.BASE_URL}gtcrn_custom.wasm`,
+      window.location.href,
+    ).toString();
+    customGtcrnBinaryPromise = loadGtcrn({ url }).then((binary) => {
+      console.log('[AI Noise] Loaded custom GTCRN model:', url);
+      return binary;
+    }).catch((error) => {
+      customGtcrnBinaryPromise = null;
+      throw error;
+    });
+  }
+  return customGtcrnBinaryPromise;
+};
+
+const hasGtcrnStage = (level) => (
+  DENOISE_SETTINGS.levels[level]?.stages.some((stage) => stage.startsWith('gtcrn')) === true
 );
 
-const createSileroVad = async (monitorStream, audioContext, setSpeechDetected) => {
+export const preloadDenoiser = (level = 'standard') => (
+  DENOISE_SETTINGS.levels[level]?.stages.includes('gtcrn-custom')
+    ? getCustomGtcrnWasmBinary()
+    : hasGtcrnStage(level)
+      ? getGtcrnWasmBinary()
+      : getRnnoiseWasmBinary()
+);
+
+const createSileroVad = async (
+  monitorStream,
+  audioContext,
+  setSpeechDetected,
+  settings = {},
+) => {
   const { MicVAD } = await import('@ricky0123/vad-web');
   const assetBasePath = new URL(
     `${import.meta.env.BASE_URL}vad-assets/`,
@@ -127,9 +182,9 @@ const createSileroVad = async (monitorStream, audioContext, setSpeechDetected) =
     },
     resumeStream: async (stream) => stream,
     startOnLoad: false,
-    positiveSpeechThreshold: 0.3,
-    negativeSpeechThreshold: 0.22,
-    redemptionMs: 150,
+    positiveSpeechThreshold: settings.positiveSpeechThreshold ?? 0.3,
+    negativeSpeechThreshold: settings.negativeSpeechThreshold ?? 0.22,
+    redemptionMs: settings.redemptionMs ?? 150,
     preSpeechPadMs: 320,
     minSpeechMs: 64,
     onSpeechStart: () => setSpeechDetected(true),
@@ -321,11 +376,14 @@ export class DenoiseEngine {
   async _createModelNode(stage) {
     const ctx = this.ctx;
 
-    if (stage === 'gtcrn') {
+    if (stage === 'gtcrn' || stage === 'gtcrn-custom') {
       if (ctx.sampleRate !== 48000 && ctx.sampleRate !== 16000) {
         throw new Error(`GTCRN does not support a ${ctx.sampleRate}Hz audio context.`);
       }
-      const wasmBinary = copyBinary(await getGtcrnWasmBinary());
+      const binary = stage === 'gtcrn-custom'
+        ? await getCustomGtcrnWasmBinary()
+        : await getGtcrnWasmBinary();
+      const wasmBinary = copyBinary(binary);
       await this._ensureModule(gtcrnWorkletPath);
       const node = new GtcrnWorkletNode(ctx, { wasmBinary, maxChannels: 1 });
       forceMono(node);
@@ -444,15 +502,20 @@ export class DenoiseEngine {
         compressor.connect(outputGain);
         outputGain.connect(gain);
 
-        vad = await createSileroVad(vadMonitor.stream, ctx, (speechDetected) => {
-          if (ctx.state === 'closed') return;
-          rampParam(
-            speechGate.gain,
-            speechDetected ? 1 : 0,
-            ctx.currentTime,
-            0.015,
-          );
-        });
+        vad = await createSileroVad(
+          vadMonitor.stream,
+          ctx,
+          (speechDetected) => {
+            if (ctx.state === 'closed') return;
+            rampParam(
+              speechGate.gain,
+              speechDetected ? 1 : 0,
+              ctx.currentTime,
+              0.015,
+            );
+          },
+          config.vad,
+        );
       } else {
         processedTail.connect(gain);
       }
@@ -509,6 +572,9 @@ export class DenoiseEngine {
   async _applyLevel(level, { instant = false } = {}) {
     const target = DENOISE_SETTINGS.levels[level] ? level : 'standard';
     if (this.chain && this.chain.level === target) return target;
+    if (target === 'ai-noise') {
+      console.log('[AI Noise] Activating custom GTCRN noise suppression.');
+    }
 
     const attempts = FALLBACK_LEVELS[target] || [target];
     let next = null;
@@ -521,8 +587,8 @@ export class DenoiseEngine {
       }
     }
     if (!next) {
-      if (target === 'voiceFocus') {
-        throw new Error('Silero VAD could not start for the Voice Focus mode.');
+      if (target === 'voiceFocus' || target === 'ai-noise') {
+        throw new Error(`Silero VAD could not start for the ${target} mode.`);
       }
       return this.chain?.level || null;
     }
