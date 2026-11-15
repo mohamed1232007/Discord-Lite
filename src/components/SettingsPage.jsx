@@ -32,6 +32,7 @@ const NOISE_LEVEL_OPTIONS = [
   { id: 'max', title: 'Maximum', desc: 'The strongest AI model with the strictest noise gate. Cuts the most background noise, but quiet speech may be clipped.' },
   { id: 'voiceFocus', title: 'Voice Focus (Silero VAD)', desc: 'GTCRN, device noise suppression, and Silero speech detection work together to reduce background noise and keyboard clicks while keeping speech audible.' },
   { id: 'ai-noise', title: 'AI Noise', desc: 'Uses your custom GTCRN model and stricter Silero speech detection to focus on the primary speaker.' },
+  { id: 'krisp', title: 'Krisp', desc: 'LiveKit Krisp noise cancellation for your microphone.' },
 ];
 
 export default function SettingsPage({ onClose }) {
@@ -51,6 +52,8 @@ export default function SettingsPage({ onClose }) {
     toggleNoiseSuppression,
     noiseLevel,
     changeNoiseLevel,
+    krispSupported,
+    krispSupportChecked,
     updateAudioDevices,
   } = useVoice();
   const { user, signOut } = useAuth();
@@ -293,14 +296,22 @@ export default function SettingsPage({ onClose }) {
                     <div className="grid gap-2">
                       {NOISE_LEVEL_OPTIONS.map((option) => {
                         const selected = noiseLevel === option.id;
+                        const krispUnavailable = option.id === 'krisp'
+                          && krispSupportChecked
+                          && !krispSupported;
                         return (
                           <button
                             key={option.id}
                             type="button"
                             role="radio"
                             aria-checked={selected}
+                            aria-disabled={krispUnavailable}
+                            disabled={krispUnavailable}
+                            title={krispUnavailable
+                              ? 'Krisp is not supported in this WebView.'
+                              : undefined}
                             onClick={() => changeNoiseLevel(option.id)}
-                            className={`text-left p-3 rounded-lg border transition-colors cursor-pointer focus:outline-none focus-visible:ring-2 focus-visible:ring-[#5865f2] ${
+                            className={`text-left p-3 rounded-lg border transition-colors cursor-pointer focus:outline-none focus-visible:ring-2 focus-visible:ring-[#5865f2] disabled:cursor-not-allowed disabled:opacity-50 ${
                               selected ? 'border-[#5865f2] bg-[#5865f2]/10' : 'border-[#3f4147] bg-[#2b2d31] hover:bg-[#313338]'
                             }`}
                           >

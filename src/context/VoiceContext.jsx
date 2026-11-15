@@ -6,6 +6,7 @@ import { useAuth } from './AuthContext';
 import { useToast } from './ToastContext';
 import { supabase } from '../services/supabaseClient';
 import { DenoiseEngine, preloadDenoiser } from '../services/denoiser';
+import { disableKrisp, enableKrisp, isKrispSupported as detectKrispSupport } from '../services/krispNoise';
 import { callApi } from '../services/callApi';
 import { useCallRoomSync } from '../hooks/useCallRoomSync';
 import { MediaPermissionModal, ScreenSharePicker } from '../components/CallPermissionModals';
@@ -22,13 +23,16 @@ const PARTICIPANT_AUDIO_STORAGE_KEY = 'dis_lite_participant_audio';
 const STREAM_AUDIO_STORAGE_KEY = 'dis_lite_stream_audio';
 const MEDIA_PERMISSION_STORAGE_KEY = 'dis_lite_media_permission_grants';
 const NOISE_LEVEL_STORAGE_KEY = 'dis_lite_noise_level';
-const NOISE_LEVELS = ['standard', 'strong', 'max', 'voiceFocus', 'ai-noise'];
+const LAST_WORKING_NOISE_LEVEL_STORAGE_KEY = 'dis_lite_last_working_noise_level';
+const NOISE_LEVELS = ['standard', 'strong', 'max', 'voiceFocus', 'ai-noise', 'krisp'];
+const NON_KRISP_NOISE_LEVELS = NOISE_LEVELS.filter((level) => level !== 'krisp');
 const NOISE_LEVEL_LABELS = {
   standard: 'Standard',
   strong: 'Strong',
   max: 'Maximum',
   voiceFocus: 'Voice Focus (Silero VAD)',
   'ai-noise': 'AI Noise',
+  krisp: 'Krisp',
 };
 
 const getSavedParticipantAudio = () => {
@@ -108,6 +112,18 @@ const getSavedNoiseLevel = () => {
   }
 };
 
+const getSavedLastWorkingNoiseLevel = () => {
+  try {
+    const savedFallback = window.localStorage.getItem(LAST_WORKING_NOISE_LEVEL_STORAGE_KEY);
+    if (NON_KRISP_NOISE_LEVELS.includes(savedFallback)) return savedFallback;
+    const savedLevel = window.localStorage.getItem(NOISE_LEVEL_STORAGE_KEY);
+    return NON_KRISP_NOISE_LEVELS.includes(savedLevel) ? savedLevel : 'standard';
+  } catch (error) {
+    console.warn('[Audio] Could not restore the last working noise mode:', error);
+    return 'standard';
+  }
+};
+
 const applyNativeNoiseFallback = async (stream) => {
   const track = stream?.getAudioTracks()[0];
   if (!track) return;
@@ -172,6 +188,8 @@ export const VoiceProvider = ({ children }) => {
   const [isNoiseSuppressionEnabled, setIsNoiseSuppressionEnabled] = useState(true);
   const [isNoiseSuppressionActive, setIsNoiseSuppressionActive] = useState(false);
   const [noiseLevel, setNoiseLevel] = useState(getSavedNoiseLevel);
+  const [krispSupported, setKrispSupported] = useState(null);
+  const [krispSupportChecked, setKrispSupportChecked] = useState(false);
   const [speakingUsers, setSpeakingUsers] = useState({});
 
   // ── Refs (لا تتغيرش بين renders) ──────────────────────
@@ -225,6 +243,9 @@ export const VoiceProvider = ({ children }) => {
   const offlineTimersRef = useRef(new Map());
   const OFFLINE_GRACE_MS = 10_000;
   const noiseLevelRef = useRef(noiseLevel);
+  const noiseSuppressionEnabledRef = useRef(isNoiseSuppressionEnabled);
+  const lastWorkingNoiseLevelRef = useRef(getSavedLastWorkingNoiseLevel());
+  const krispSupportCheckRef = useRef(null);
 
   const requestMediaPermission = (kind) => new Promise((resolve) => {
     if (hasMediaPermissionGrant(user?.id, kind)) {
@@ -294,6 +315,7 @@ export const VoiceProvider = ({ children }) => {
     let timeoutHandle;
     const warmDenoiser = () => {
       if (cancelled) return;
+      if (noiseLevelRef.current === 'krisp') return;
       preloadDenoiser(noiseLevelRef.current).catch((error) => {
         console.warn('[NoiseSuppression] Could not preload the audio model:', error);
       });
@@ -434,7 +456,10 @@ export const VoiceProvider = ({ children }) => {
 
     const previousTrack = localPublishedTracksRef.current.get(key);
     if (previousTrack?.mediaStreamTrack === mediaTrack) return previousTrack;
-    if (previousTrack) await unpublishLiveKitTrack(key, false);
+    if (previousTrack) {
+      if (key === 'microphone') await disableKrisp(previousTrack);
+      await unpublishLiveKitTrack(key, false);
+    }
 
     const localTrack = mediaTrack.kind === 'audio'
       ? new LocalAudioTrack(mediaTrack)
@@ -442,6 +467,7 @@ export const VoiceProvider = ({ children }) => {
     try {
       await room.localParticipant.publishTrack(localTrack, { source, ...options });
       localPublishedTracksRef.current.set(key, localTrack);
+      if (key === 'microphone') await applyKrispToPublishedTrack(localTrack);
       return localTrack;
     } catch (error) {
       localTrack.stop();
@@ -584,6 +610,14 @@ export const VoiceProvider = ({ children }) => {
     room.on(RoomEvent.TrackSubscribed, addRemoteTrack);
     room.on(RoomEvent.TrackUnsubscribed, removeRemoteTrack);
     room.on(RoomEvent.ParticipantConnected, markCallConnected);
+    room.on(RoomEvent.Reconnected, () => {
+      const microphoneTrack = localPublishedTracksRef.current.get('microphone');
+      if (microphoneTrack instanceof LocalAudioTrack) {
+        applyKrispToPublishedTrack(microphoneTrack).catch((error) => {
+          console.error('[Krisp] Could not restore the filter after reconnect:', error);
+        });
+      }
+    });
     room.on(RoomEvent.ParticipantDisconnected, (participant) => {
       if (participant.identity.endsWith(':screen')) {
         const participantId = participant.identity.slice(0, -':screen'.length);
@@ -784,6 +818,54 @@ export const VoiceProvider = ({ children }) => {
     return denoiseEngineRef.current;
   };
 
+  const rememberWorkingNoiseLevel = (level) => {
+    if (!NON_KRISP_NOISE_LEVELS.includes(level)) return;
+    lastWorkingNoiseLevelRef.current = level;
+    try {
+      window.localStorage.setItem(LAST_WORKING_NOISE_LEVEL_STORAGE_KEY, level);
+    } catch (error) {
+      console.warn('[Audio] Could not save the last working noise mode:', error);
+    }
+  };
+
+  const applyKrispToPublishedTrack = async (localTrack) => {
+    if (noiseLevelRef.current === 'krisp' && noiseSuppressionEnabledRef.current) {
+      try {
+        await enableKrisp(localTrack);
+      } catch (error) {
+        console.error('[Krisp] Could not enable the noise filter:', error);
+        if (error?.message === 'Krisp noise filtering is not supported in this WebView.') {
+          setKrispSupported(false);
+          setKrispSupportChecked(true);
+        }
+        await restoreLastWorkingNoiseMode(localTrack, error);
+        return;
+      }
+
+      noiseSuppressionActiveRef.current = true;
+      setIsNoiseSuppressionActive(true);
+      publishCallState({ noiseSuppressionActive: true });
+      const updatedParticipants = callParticipantsRef.current.map((participant) => (
+        participant.user_id === user?.id
+          ? { ...participant, noise_suppression_enabled: true }
+          : participant
+      ));
+      callParticipantsRef.current = updatedParticipants;
+      setCallParticipants(updatedParticipants);
+      const roomId = activeCallRef.current?.roomId;
+      if (roomId) {
+        callApi(token, `/${roomId}/noise`, {
+          method: 'PATCH',
+          body: { enabled: true },
+        }).catch((error) => {
+          console.error('[Krisp] Could not sync filter state with the call:', error);
+        });
+      }
+      return;
+    }
+    await disableKrisp(localTrack);
+  };
+
   // تنظيف محرك الصوت عند إغلاق الـ provider (تسجيل خروج/إغلاق التطبيق)
   useEffect(() => () => {
     intentionalDisconnectRef.current = true;
@@ -840,7 +922,31 @@ export const VoiceProvider = ({ children }) => {
         }
 
         const engine = denoiseEngineRef.current;
-        if (engine && !engine.destroyed) {
+        const publishedMicrophone = localPublishedTracksRef.current.get('microphone');
+        let refreshKrispAfterMicSwitch = false;
+        if (
+          noiseLevelRef.current === 'krisp'
+          && noiseSuppressionEnabledRef.current
+          && publishedMicrophone instanceof LocalAudioTrack
+        ) {
+          if (engine && !engine.destroyed) {
+            await engine.setSource(newRawStream);
+          } else {
+            const nextTrack = newRawStream.getAudioTracks()[0];
+            if (!nextTrack) throw new Error('The selected microphone did not provide an audio track.');
+            nextTrack.enabled = !localCallStateRef.current.muted;
+            await publishedMicrophone.replaceTrack(nextTrack);
+
+            const localStream = localStreamRef.current;
+            const oldTrack = localStream.getAudioTracks()[0];
+            if (oldTrack && oldTrack !== nextTrack) localStream.removeTrack(oldTrack);
+            if (!localStream.getAudioTracks().includes(nextTrack)) localStream.addTrack(nextTrack);
+            if (oldTrack && oldTrack !== nextTrack && oldTrack !== rawMicStreamRef.current?.getAudioTracks()[0]) {
+              oldTrack.stop();
+            }
+          }
+          refreshKrispAfterMicSwitch = true;
+        } else if (engine && !engine.destroyed) {
           await engine.setSource(newRawStream);
         } else {
           // مفيش محرك (فشل تشغيله) — نستخدم المايك الجديد مباشرة
@@ -862,6 +968,9 @@ export const VoiceProvider = ({ children }) => {
         const previousRawStream = rawMicStreamRef.current;
         rawMicStreamRef.current = newRawStream;
         previousRawStream?.getTracks().forEach((track) => track.stop());
+        if (refreshKrispAfterMicSwitch) {
+          await applyKrispToPublishedTrack(publishedMicrophone);
+        }
 
         publishCallState({ noiseSuppressionActive: noiseSuppressionActiveRef.current });
 
@@ -1049,23 +1158,24 @@ export const VoiceProvider = ({ children }) => {
 
       let audioTrack = rawStream.getAudioTracks()[0];
       let noiseActive = false;
+      const useKrisp = noiseSuppressionEnabledRef.current && noiseLevelRef.current === 'krisp';
 
       // بنشغّل المحرك دايماً (حتى لو الفلتر مقفول) عشان مسار الصوت المرسل
       // يفضل ثابت طول المكالمة، وتبديل المستوى/التشغيل ما يعملش انقطاع.
       try {
         const engine = getDenoiseEngine();
         const result = await engine.start(rawStream, {
-          enabled: isNoiseSuppressionEnabled,
+          enabled: noiseSuppressionEnabledRef.current && !useKrisp,
           level: noiseLevelRef.current,
         });
 
         if (result.track) audioTrack = result.track;
-        noiseActive = isNoiseSuppressionEnabled && result.active;
+        noiseActive = noiseSuppressionEnabledRef.current && result.active;
 
         // تطبيق مستوى صوت المايك الحالي
         engine.setMicGain(micVolume);
 
-        if (isNoiseSuppressionEnabled && !result.active) {
+        if (noiseSuppressionEnabledRef.current && !useKrisp && !result.active) {
           await applyNativeNoiseFallback(rawStream);
           toast.warning('AI noise suppression is unavailable; microphone noise reduction remains enabled.');
         }
@@ -1074,7 +1184,7 @@ export const VoiceProvider = ({ children }) => {
         destroyDenoiseEngine();
         audioTrack = rawStream.getAudioTracks()[0];
         noiseActive = false;
-        if (isNoiseSuppressionEnabled) {
+        if (noiseSuppressionEnabledRef.current && !useKrisp) {
           await applyNativeNoiseFallback(rawStream);
           toast.warning('AI noise suppression is unavailable; microphone noise reduction remains enabled.');
         }
@@ -1765,7 +1875,7 @@ export const VoiceProvider = ({ children }) => {
   // ─────────────────────────────────────────────────────
   // 6. Toggle Mute (كتم المايك محلياً وفي شبكة الـ WebRTC فوراً)
   // ─────────────────────────────────────────────────────
-  const toggleMute = () => {
+  const toggleMute = async () => {
     if (isDeafened && isMuted) {
       toast.info('Undeafen before unmuting your microphone.');
       return;
@@ -1776,12 +1886,16 @@ export const VoiceProvider = ({ children }) => {
     setIsMuted(next);
     localStreamRef.current?.getAudioTracks().forEach((track) => { track.enabled = !next; });
     publishCallState({ muted: next });
+    const publishedMicrophone = localPublishedTracksRef.current.get('microphone');
+    if (publishedMicrophone instanceof LocalAudioTrack) {
+      await applyKrispToPublishedTrack(publishedMicrophone);
+    }
   };
 
   // ─────────────────────────────────────────────────────
   // 7. Toggle Deafen (كتم سماع صوت الطرف الآخر تماماً)
   // ─────────────────────────────────────────────────────
-  const toggleDeafen = () => {
+  const toggleDeafen = async () => {
     const next = !isDeafened;
     playSoundEffect('deafen');
     setIsDeafened(next);
@@ -1801,6 +1915,10 @@ export const VoiceProvider = ({ children }) => {
     setIsMuted(muted);
     localStreamRef.current?.getAudioTracks().forEach((track) => { track.enabled = !muted; });
     publishCallState({ muted, deafened: next });
+    const publishedMicrophone = localPublishedTracksRef.current.get('microphone');
+    if (publishedMicrophone instanceof LocalAudioTrack) {
+      await applyKrispToPublishedTrack(publishedMicrophone);
+    }
   };
 
   // ─────────────────────────────────────────────────────
@@ -2235,46 +2353,67 @@ export const VoiceProvider = ({ children }) => {
       if (denoiseGenerationRef.current !== generation) return;
 
       const engine = denoiseEngineRef.current;
+      const publishedMicrophone = localPublishedTracksRef.current.get('microphone');
+      if (
+        enabled
+        && level === 'krisp'
+        && !(publishedMicrophone instanceof LocalAudioTrack)
+      ) {
+        return;
+      }
 
-      if (engine && !engine.destroyed) {
+      if (enabled && level === 'krisp') {
+        if (engine && !engine.destroyed) await engine.setEnabled(false);
+        if (!(publishedMicrophone instanceof LocalAudioTrack)) {
+          throw new Error('The published microphone track is unavailable for Krisp.');
+        }
+        await enableKrisp(publishedMicrophone);
+        active = true;
+      } else {
+        if (publishedMicrophone instanceof LocalAudioTrack) {
+          await disableKrisp(publishedMicrophone);
+        }
+
+        if (engine && !engine.destroyed) {
         // نفس الـ graph ونفس المسار المرسل: تبديل المستوى بيحصل بـ crossfade
         // جوه الصوت، فمفيش replaceTrack ومفيش انقطاع.
-        if (enabled) await engine.setLevel(level);
-        active = await engine.setEnabled(enabled);
-        if (denoiseGenerationRef.current !== generation) return;
+          if (enabled) await engine.setLevel(level);
+          active = await engine.setEnabled(enabled);
+          if (denoiseGenerationRef.current !== generation) return;
 
-        if (enabled && !active) {
-          await applyNativeNoiseFallback(rawMicStreamRef.current);
-          toast.warning('AI noise suppression could not start; microphone noise reduction remains enabled.');
-        }
-      } else if (enabled) {
-        // مفيش محرك شغال (فشل تشغيله وقت بداية المكالمة) — نبني واحد ونربطه
-        const rawStream = await ensureLiveRawMicStream();
-        if (denoiseGenerationRef.current !== generation) return;
+          if (enabled && !active) {
+            await applyNativeNoiseFallback(rawMicStreamRef.current);
+            toast.warning('AI noise suppression could not start; microphone noise reduction remains enabled.');
+          }
+        } else if (enabled) {
+          // مفيش محرك شغال (فشل تشغيله وقت بداية المكالمة) — نبني واحد ونربطه
+          const rawStream = await ensureLiveRawMicStream();
+          if (denoiseGenerationRef.current !== generation) return;
 
-        const created = getDenoiseEngine();
-        const result = await created.start(rawStream, { enabled: true, level });
-        if (denoiseGenerationRef.current !== generation) {
-          destroyDenoiseEngine();
-          return;
-        }
-        if (!result.track) throw new Error('Noise suppression did not produce an audio track.');
+          const created = getDenoiseEngine();
+          const result = await created.start(rawStream, { enabled: true, level });
+          if (denoiseGenerationRef.current !== generation) {
+            destroyDenoiseEngine();
+            return;
+          }
+          if (!result.track) throw new Error('Noise suppression did not produce an audio track.');
 
-        result.track.enabled = !localCallStateRef.current.muted;
-        await publishLiveKitTrack(result.track, 'microphone', Track.Source.Microphone);
+          result.track.enabled = !localCallStateRef.current.muted;
+          await publishLiveKitTrack(result.track, 'microphone', Track.Source.Microphone);
 
-        // مهم: لو المسار القديم هو نفسه مايك المصدر الخام، ممنوع نوقفه
-        // وإلا المحرك الجديد هيقرأ من مسار ميت => صوت صامت من طرف واحد.
-        const rawTrack = rawStream.getAudioTracks()[0];
-        const oldTrack = localStream.getAudioTracks()[0];
-        if (oldTrack && oldTrack !== result.track) localStream.removeTrack(oldTrack);
-        if (!localStream.getAudioTracks().includes(result.track)) localStream.addTrack(result.track);
-        if (oldTrack && oldTrack !== result.track && oldTrack !== rawTrack) oldTrack.stop();
+          // مهم: لو المسار القديم هو نفسه مايك المصدر الخام، ممنوع نوقفه
+          // وإلا المحرك الجديد هيقرأ من مسار ميت => صوت صامت من طرف واحد.
+          const rawTrack = rawStream.getAudioTracks()[0];
+          const oldTrack = localStream.getAudioTracks()[0];
+          if (oldTrack && oldTrack !== result.track) localStream.removeTrack(oldTrack);
+          if (!localStream.getAudioTracks().includes(result.track)) localStream.addTrack(result.track);
+          if (oldTrack && oldTrack !== result.track && oldTrack !== rawTrack) oldTrack.stop();
 
-        active = result.active;
-        if (!active) {
-          await applyNativeNoiseFallback(rawStream);
-          toast.warning('AI noise suppression could not start; microphone noise reduction remains enabled.');
+          active = result.active;
+          if (!active) {
+            await applyNativeNoiseFallback(rawStream);
+            toast.warning('AI noise suppression could not start; microphone noise reduction remains enabled.');
+          }
         }
       }
 
@@ -2295,6 +2434,14 @@ export const VoiceProvider = ({ children }) => {
       callParticipantsRef.current = updatedParticipants;
       setCallParticipants(updatedParticipants);
     } catch (error) {
+      if (enabled && level === 'krisp') {
+        console.error('[Krisp] Could not activate the filter:', error);
+        await restoreLastWorkingNoiseMode(
+          localPublishedTracksRef.current.get('microphone'),
+          error,
+        );
+        return;
+      }
       console.error('[NoiseSuppression] live switch failed:', error);
       toast.error('Could not change noise suppression for the live call.');
     }
@@ -2302,6 +2449,7 @@ export const VoiceProvider = ({ children }) => {
 
   const toggleNoiseSuppression = async () => {
     const next = !isNoiseSuppressionEnabled;
+    noiseSuppressionEnabledRef.current = next;
     setIsNoiseSuppressionEnabled(next);
     toast.info(next ? 'AI Noise Suppression enabled' : 'AI Noise Suppression disabled');
     await applyLiveNoiseSuppression(next, noiseLevelRef.current);
@@ -2309,10 +2457,60 @@ export const VoiceProvider = ({ children }) => {
 
   const changeNoiseLevel = async (level) => {
     if (!NOISE_LEVELS.includes(level) || level === noiseLevelRef.current) return;
+    if (level === 'krisp' && !await checkKrispSupport()) {
+      toast.warning('Krisp is not supported in this WebView; your previous noise mode remains active.');
+      return;
+    }
+
+    if (level === 'krisp') rememberWorkingNoiseLevel(noiseLevelRef.current);
+    else rememberWorkingNoiseLevel(level);
     noiseLevelRef.current = level;
     setNoiseLevel(level);
     toast.info(`Noise suppression: ${NOISE_LEVEL_LABELS[level]}`);
-    if (isNoiseSuppressionEnabled) await applyLiveNoiseSuppression(true, level);
+    if (noiseSuppressionEnabledRef.current) await applyLiveNoiseSuppression(true, level);
+  };
+
+  const restoreLastWorkingNoiseMode = async (localTrack, error) => {
+    try {
+      await disableKrisp(localTrack);
+    } catch (disposeError) {
+      console.error('[Krisp] Could not stop the failed noise filter:', disposeError);
+    }
+
+    const fallbackLevel = NON_KRISP_NOISE_LEVELS.includes(lastWorkingNoiseLevelRef.current)
+      ? lastWorkingNoiseLevelRef.current
+      : 'standard';
+    noiseLevelRef.current = fallbackLevel;
+    setNoiseLevel(fallbackLevel);
+    toast.warning(
+      `Krisp is unavailable${error?.message ? `: ${error.message}` : ''}. Reverted to ${NOISE_LEVEL_LABELS[fallbackLevel]}.`,
+    );
+
+    if (activeCallRef.current?.roomId && localStreamRef.current) {
+      await applyLiveNoiseSuppression(noiseSuppressionEnabledRef.current, fallbackLevel);
+    }
+  };
+
+  const checkKrispSupport = async () => {
+    if (!krispSupportCheckRef.current) {
+      krispSupportCheckRef.current = detectKrispSupport().catch((error) => {
+        krispSupportCheckRef.current = null;
+        throw error;
+      });
+    }
+
+    let supported = false;
+    try {
+      supported = await krispSupportCheckRef.current;
+    } catch (error) {
+      console.warn('[Krisp] Could not check WebView support:', error);
+    }
+    setKrispSupported(supported);
+    setKrispSupportChecked(true);
+    if (!supported && noiseLevelRef.current === 'krisp') {
+      await restoreLastWorkingNoiseMode(null, new Error('Krisp is not supported in this WebView.'));
+    }
+    return supported;
   };
 
   // ─────────────────────────────────────────────────────
@@ -2338,6 +2536,8 @@ export const VoiceProvider = ({ children }) => {
       isNoiseSuppressionEnabled,
       isNoiseSuppressionActive,
       noiseLevel,
+      krispSupported,
+      krispSupportChecked,
       toggleNoiseSuppression,
       changeNoiseLevel,
       microphones,

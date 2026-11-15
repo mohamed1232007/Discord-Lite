@@ -12,6 +12,7 @@
   },
   "dependencies": {
     "@livekit/components-react": "^2.9.24",
+    "@livekit/krisp-noise-filter": "0.4.6",
     "@ricky0123/vad-web": "^0.0.31",
     "@sapphi-red/web-noise-suppressor": "^0.4.1",
     "@supabase/supabase-js": "^2.118.0",
