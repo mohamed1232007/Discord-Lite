@@ -27,21 +27,6 @@ export const DENOISE_SETTINGS = {
       gateOpenDb: -52,
       gateCloseDb: -58,
     },
-    strong: {
-      stages: ['gtcrn'],
-      highpassHz: 90,
-      gateOpenDb: -52,
-      gateCloseDb: -58,
-    },
-    // Maximum: أقوى موديل (GTCRN) + أقصى فلترة (بوابة ضوضاء أكثر صرامة).
-    // ملاحظة مهمة: تشغيل موديلين ورا بعض (gtcrn ثم rnnoise) كان بيطلّع
-    // صوت صامت تمامًا على أجهزة كثيرة، فبنستخدم موديل واحد موثوق بدل السلسلة.
-    max: {
-      stages: ['gtcrn'],
-      highpassHz: 120,
-      gateOpenDb: -40,
-      gateCloseDb: -48,
-    },
     voiceFocus: {
       stages: ['gtcrn'],
       highpassHz: 100,
@@ -91,8 +76,6 @@ export const DENOISE_SETTINGS = {
 };
 
 const FALLBACK_LEVELS = {
-  max: ['max', 'strong', 'standard'],
-  strong: ['strong', 'standard'],
   standard: ['standard'],
   voiceFocus: ['voiceFocus'],
   'ai-noise': ['ai-noise'],

@@ -28,9 +28,7 @@ const SIDEBAR_ITEMS = [
 
 const NOISE_LEVEL_OPTIONS = [
   { id: 'standard', title: 'Standard', badge: 'Default', desc: 'Balanced. Removes typing, fans and background hum while keeping your voice natural.' },
-  { id: 'strong', title: 'Strong', desc: 'A different AI model with a stricter filter. Cleaner in noisy rooms, but may clip quiet speech.' },
-  { id: 'max', title: 'Maximum', desc: 'The strongest AI model with the strictest noise gate. Cuts the most background noise, but quiet speech may be clipped.' },
-  { id: 'voiceFocus', title: 'Voice Focus (Silero VAD)', desc: 'GTCRN, device noise suppression, and Silero speech detection work together to reduce background noise and keyboard clicks while keeping speech audible.' },
+  { id: 'voiceFocus', title: 'Voice Focus', desc: 'GTCRN, device noise suppression, and Silero speech detection work together to reduce background noise and keyboard clicks while keeping speech audible.' },
   { id: 'ai-noise', title: 'AI Noise', desc: 'Uses your custom GTCRN model and stricter Silero speech detection to focus on the primary speaker.' },
   { id: 'krisp', title: 'Krisp', desc: 'LiveKit Krisp noise cancellation for your microphone.' },
 ];
