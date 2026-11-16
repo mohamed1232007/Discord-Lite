@@ -218,9 +218,7 @@ export default function FriendsView({ onStartChat, deferredUpdate, onOpenUpdate 
             </button>
             <button 
               onClick={() => setTab('add')}
-              className={`px-2 py-1 rounded font-semibold transition ${
-                tab === 'add' ? 'bg-transparent text-[#23a55a]' : 'bg-[#248046] text-white hover:bg-[#1a6334]'
-              }`}
+              className="rounded-lg bg-[#5865f2] px-3 py-1.5 text-sm font-semibold text-white transition hover:bg-[#4752c4]"
             >
               Add Friend
             </button>
@@ -294,7 +292,7 @@ export default function FriendsView({ onStartChat, deferredUpdate, onOpenUpdate 
                     <button
                       onClick={() => handleSendRequest(u.id)}
                       disabled={!!requestStatus[u.id]}
-                      className="bg-[#248046] hover:bg-[#1a6334] text-white text-xs font-semibold px-4 py-2 rounded transition disabled:opacity-60"
+                      className="rounded bg-[#5865f2] px-4 py-2 text-xs font-semibold text-white transition hover:bg-[#4752c4] disabled:opacity-60"
                     >
                       {requestStatus[u.id] || 'Send Friend Request'}
                     </button>

@@ -29,8 +29,8 @@ const SIDEBAR_ITEMS = [
 const NOISE_LEVEL_OPTIONS = [
   { id: 'standard', title: 'Standard', badge: 'Default', desc: 'Balanced. Removes typing, fans and background hum while keeping your voice natural.' },
   { id: 'voiceFocus', title: 'Voice Focus', desc: 'GTCRN, device noise suppression, and Silero speech detection work together to reduce background noise and keyboard clicks while keeping speech audible.' },
-  { id: 'ai-noise', title: 'AI Noise', desc: 'Uses your custom GTCRN model and stricter Silero speech detection to focus on the primary speaker.' },
   { id: 'krisp', title: 'Krisp', desc: 'LiveKit Krisp noise cancellation for your microphone.' },
+  { id: 'ai-noise', title: 'AI Noise', badge: 'In Development', desc: 'Uses your custom GTCRN model for microphone noise suppression.' },
 ];
 
 export default function SettingsPage({ onClose }) {

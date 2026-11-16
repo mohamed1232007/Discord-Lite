@@ -1210,7 +1210,10 @@ export const VoiceProvider = ({ children }) => {
       // ده مهم جداً: أي إضافة/إزالة tracks أثناء المكالمة ما تأثرش على مصدر
       // إزالة الضوضاء => ما يحصلش صوت من طرف واحد.
       const outputStream = new MediaStream();
-      if (audioTrack) outputStream.addTrack(audioTrack);
+      if (audioTrack) {
+        audioTrack.enabled = !localCallStateRef.current.muted;
+        outputStream.addTrack(audioTrack);
+      }
 
       rawStream.getVideoTracks().forEach((track) => {
         if (!outputStream.getVideoTracks().some((item) => item.id === track.id)) {
@@ -1449,12 +1452,12 @@ export const VoiceProvider = ({ children }) => {
       setCallConnectedAt(null);
       activeCallRef.current = callState;
       setActiveCall(callState);
-      setIsMuted(false);
-      setIsDeafened(false);
-      mutedBeforeDeafenRef.current = false;
+      const { muted, deafened } = localCallStateRef.current;
+      setIsMuted(muted);
+      setIsDeafened(deafened);
       localCallStateRef.current = {
-        muted: false,
-        deafened: false,
+        muted,
+        deafened,
         camera: isVideo,
         screen: false,
         videoCall: isVideo,
@@ -1517,9 +1520,9 @@ export const VoiceProvider = ({ children }) => {
       localMembershipActiveRef.current = true;
       const participants = await refreshCallParticipants(inc.roomId);
       if (participants.length === 0) throw new Error('Could not load members of the call.');
-      setIsMuted(false);
-      setIsDeafened(false);
-      mutedBeforeDeafenRef.current = false;
+      const { muted, deafened } = localCallStateRef.current;
+      setIsMuted(muted);
+      setIsDeafened(deafened);
       const isVideoCall = pendingVideoCallRef.current;
       const callState = {
         roomId: inc.roomId,
@@ -1529,8 +1532,8 @@ export const VoiceProvider = ({ children }) => {
         participants,
       };
       localCallStateRef.current = {
-        muted: false,
-        deafened: false,
+        muted,
+        deafened,
         camera: false,
         screen: false,
         videoCall: isVideoCall,
@@ -1734,10 +1737,10 @@ export const VoiceProvider = ({ children }) => {
     setNativeShareSourcesError('');
     cameraEnabledRef.current = false;
     pendingVideoCallRef.current = false;
-    mutedBeforeDeafenRef.current = false;
+    const { muted, deafened } = localCallStateRef.current;
     localCallStateRef.current = {
-      muted: false,
-      deafened: false,
+      muted,
+      deafened,
       camera: false,
       screen: false,
       videoCall: false,
@@ -1757,8 +1760,6 @@ export const VoiceProvider = ({ children }) => {
     setRemoteStreams([]);
     setSpeakingUsers({});
     setCallStatus('idle');
-    setIsMuted(false);
-    setIsDeafened(false);
     setIsVideoEnabled(false);
     setIsScreenSharing(false);
     setIsNativeScreenSharing(false);
@@ -1895,7 +1896,7 @@ export const VoiceProvider = ({ children }) => {
     }
 
     const next = !isMuted;
-    playSoundEffect('mute');
+    playSoundEffect(next ? 'mute' : 'unmute');
     setIsMuted(next);
     localStreamRef.current?.getAudioTracks().forEach((track) => { track.enabled = !next; });
     publishCallState({ muted: next });
@@ -1910,7 +1911,7 @@ export const VoiceProvider = ({ children }) => {
   // ─────────────────────────────────────────────────────
   const toggleDeafen = async () => {
     const next = !isDeafened;
-    playSoundEffect('deafen');
+    playSoundEffect(next ? 'deafen' : 'undeafen');
     setIsDeafened(next);
     remoteAudioElementsRef.current.forEach((element) => {
       element.muted = next;
@@ -2373,7 +2374,7 @@ export const VoiceProvider = ({ children }) => {
   const applyLiveNoiseSuppression = async (enabled, level) => {
     const roomId = activeCallRef.current?.roomId;
     const localStream = localStreamRef.current;
-    if (!roomId || !localStream) return;
+    if (!roomId || !localStream) return true;
 
     // رقم الجيل يمنع تتالي التبديلات السريعة من إبقاء حالة قديمة هي الظاهرة
     const generation = denoiseGenerationRef.current + 1;
@@ -2382,7 +2383,7 @@ export const VoiceProvider = ({ children }) => {
     try {
       let active = false;
       await disableNativeVoiceFocusNoiseSuppression(rawMicStreamRef.current);
-      if (denoiseGenerationRef.current !== generation) return;
+      if (denoiseGenerationRef.current !== generation) return false;
 
       const engine = denoiseEngineRef.current;
       const publishedMicrophone = localPublishedTracksRef.current.get('microphone');
@@ -2391,14 +2392,14 @@ export const VoiceProvider = ({ children }) => {
         && level === 'krisp'
         && !(publishedMicrophone instanceof LocalAudioTrack)
       ) {
-        return;
+        return false;
       }
 
       if (enabled && level === 'krisp') {
         if (engine && !engine.destroyed) await engine.setEnabled(false);
-        if (denoiseGenerationRef.current !== generation) return;
+        if (denoiseGenerationRef.current !== generation) return false;
         const rawStream = await ensureLiveRawMicStream();
-        if (denoiseGenerationRef.current !== generation) return;
+        if (denoiseGenerationRef.current !== generation) return false;
         const rawTrack = rawStream.getAudioTracks()[0];
         if (!rawTrack) throw new Error('The selected microphone did not provide an audio track.');
         rawTrack.enabled = !localCallStateRef.current.muted;
@@ -2415,7 +2416,7 @@ export const VoiceProvider = ({ children }) => {
           // جوه الصوت، فمفيش replaceTrack ومفيش انقطاع.
           if (enabled) await engine.setLevel(level);
           active = await engine.setEnabled(enabled);
-          if (denoiseGenerationRef.current !== generation) return;
+          if (denoiseGenerationRef.current !== generation) return false;
 
           if (enabled && !active) {
             await applyNativeNoiseFallback(rawMicStreamRef.current);
@@ -2427,13 +2428,13 @@ export const VoiceProvider = ({ children }) => {
         } else if (enabled) {
           // مفيش محرك شغال (فشل تشغيله وقت بداية المكالمة) — نبني واحد ونربطه
           const rawStream = await ensureLiveRawMicStream();
-          if (denoiseGenerationRef.current !== generation) return;
+          if (denoiseGenerationRef.current !== generation) return false;
 
           const created = getDenoiseEngine();
           const result = await created.start(rawStream, { enabled: true, level });
           if (denoiseGenerationRef.current !== generation) {
             destroyDenoiseEngine();
-            return;
+            return false;
           }
           if (!result.track) throw new Error('Noise suppression did not produce an audio track.');
 
@@ -2472,6 +2473,7 @@ export const VoiceProvider = ({ children }) => {
       ));
       callParticipantsRef.current = updatedParticipants;
       setCallParticipants(updatedParticipants);
+      return true;
     } catch (error) {
       if (enabled && level === 'krisp') {
         console.error('[Krisp] Could not activate the filter:', error);
@@ -2479,10 +2481,14 @@ export const VoiceProvider = ({ children }) => {
           localPublishedTracksRef.current.get('microphone'),
           error,
         );
-        return;
+        return false;
       }
       console.error('[NoiseSuppression] live switch failed:', error);
-      toast.error('Could not change noise suppression for the live call.');
+      const errorMessage = error instanceof Error ? error.message : String(error);
+      toast.error(level === 'ai-noise'
+        ? `AI Noise could not start: ${errorMessage}`
+        : 'Could not change noise suppression for the live call.');
+      return false;
     }
   };
 
@@ -2501,12 +2507,27 @@ export const VoiceProvider = ({ children }) => {
       return;
     }
 
-    if (level === 'krisp') rememberWorkingNoiseLevel(noiseLevelRef.current);
-    else rememberWorkingNoiseLevel(level);
+    const previousLevel = noiseLevelRef.current;
+    if (level === 'krisp') rememberWorkingNoiseLevel(previousLevel);
     noiseLevelRef.current = level;
     setNoiseLevel(level);
+    if (
+      noiseSuppressionEnabledRef.current
+      && activeCallRef.current?.roomId
+      && localStreamRef.current
+    ) {
+      const applied = await applyLiveNoiseSuppression(true, level);
+      if (!applied) {
+        if (noiseLevelRef.current === level) {
+          noiseLevelRef.current = previousLevel;
+          setNoiseLevel(previousLevel);
+        }
+        return;
+      }
+    }
+
+    if (level !== 'krisp') rememberWorkingNoiseLevel(level);
     toast.info(`Noise suppression: ${NOISE_LEVEL_LABELS[level]}`);
-    if (noiseSuppressionEnabledRef.current) await applyLiveNoiseSuppression(true, level);
   };
 
   const restoreLastWorkingNoiseMode = async (localTrack, error) => {

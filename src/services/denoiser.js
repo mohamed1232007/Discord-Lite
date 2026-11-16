@@ -50,27 +50,7 @@ export const DENOISE_SETTINGS = {
     'ai-noise': {
       stages: ['gtcrn-custom'],
       highpassHz: 100,
-      gateOpenDb: -52,
-      gateCloseDb: -58,
-      speechDelayMs: 60,
-      highShelfHz: 10000,
-      highShelfGainDb: -1.5,
-      clarityHz: 2800,
-      clarityGainDb: 3.5,
-      clarityQ: 1.1,
-      warmthHz: 180,
-      warmthGainDb: 4,
-      warmthQ: 0.8,
-      presenceHz: 4500,
-      presenceGainDb: 2,
-      presenceQ: 1,
-      makeupGain: 1.75,
-      voiceActivityDetector: true,
-      vad: {
-        positiveSpeechThreshold: 0.75,
-        negativeSpeechThreshold: 0.55,
-        redemptionMs: 80,
-      },
+      hardGate: false,
     },
   },
 };
@@ -115,7 +95,7 @@ const getCustomGtcrnWasmBinary = () => {
       window.location.href,
     ).toString();
     customGtcrnBinaryPromise = loadGtcrn({ url }).then((binary) => {
-      console.log('[AI Noise] Loaded custom GTCRN model:', url);
+      console.info('[AI Noise] Loaded custom GTCRN model:', url);
       return binary;
     }).catch((error) => {
       customGtcrnBinaryPromise = null;
@@ -410,7 +390,7 @@ export class DenoiseEngine {
       }
 
       let processedTail = tail;
-      if (!config.voiceActivityDetector) {
+      if (!config.voiceActivityDetector && config.hardGate !== false) {
         const gate = new NoiseGateWorkletNode(ctx, {
           openThreshold: config.gateOpenDb,
           closeThreshold: config.gateCloseDb,
@@ -580,6 +560,10 @@ export class DenoiseEngine {
       return null;
     }
 
+    if (target === 'ai-noise') {
+      next.nodes.forEach((node) => node.resetState?.());
+    }
+
     if (this.source) this.source.connect(next.head);
 
     const previous = this.chain;
@@ -641,6 +625,10 @@ export class DenoiseEngine {
       } catch {
         // تجاهل
       }
+    }
+
+    if (this.chain?.level === 'ai-noise') {
+      this.chain.nodes.forEach((node) => node.resetState?.());
     }
 
     if (this.ctx.state === 'suspended') {
