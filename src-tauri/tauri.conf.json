@@ -1,7 +1,7 @@
 {
   "$schema": "../node_modules/@tauri-apps/cli/config.schema.json",
   "productName": "Discord Lite",
-  "version": "3.2.8",
+  "version": "3.2.9",
   "identifier": "com.discordlite.app",
   "build": {
     "frontendDist": "../dist",
@@ -30,6 +30,7 @@
   },
   "bundle": {
     "active": true,
+    "copyright": "Copyright (c) 2026 Discord Lite contributors",
     "createUpdaterArtifacts": true,
     "targets": "all",
     "icon": [

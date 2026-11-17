@@ -903,7 +903,7 @@ export default function CallScreen({ onOpenChat, deferredUpdate, onOpenUpdate })
                       className={`absolute left-3 top-3 rounded-md bg-black/70 px-2 py-1 text-[10px] font-medium backdrop-blur-sm ${
                         muted ? 'text-[#f23f43]' : noiseActive ? 'text-[#23a55a]' : 'text-[#b5bac1]'
                       }`}
-                      title={noiseActive ? 'AI noise suppression is active' : 'AI noise suppression is not active'}
+                      title={noiseActive ? 'Noise suppression is active' : 'Noise suppression is not active'}
                     >
                       {muted ? 'Muted' : noiseActive ? 'Noise suppression on' : 'Connected'}
                     </div>
@@ -1094,10 +1094,10 @@ export default function CallScreen({ onOpenChat, deferredUpdate, onOpenUpdate })
               isNoiseSuppressionEnabled ? 'text-[#23a55a] bg-[#23a55a]/20 hover:bg-[#23a55a]/30' : 'text-[#80848e] hover:text-white hover:bg-[#1e1f22]'
             }`}
             title={isNoiseSuppressionActive
-              ? 'AI Noise Suppression is processing your microphone'
+              ? 'Noise suppression is processing your microphone'
               : isNoiseSuppressionEnabled
-                ? 'AI Noise Suppression is enabled but not currently processing'
-                : 'AI Noise Suppression: Off'}
+                ? 'Noise suppression is enabled but not currently processing'
+                : 'Noise suppression: Off'}
           >
             <Sparkles size={20} />
           </button>

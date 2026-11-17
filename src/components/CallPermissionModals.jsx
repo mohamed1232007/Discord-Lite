@@ -303,6 +303,9 @@ export function ScreenSharePicker({
               type="button"
               role="switch"
               aria-checked={includeSystemAudio}
+              title={isNativePicker
+                ? "Shares other apps' audio while excluding Discord Lite call audio to prevent echo."
+                : undefined}
               onClick={() => setIncludeSystemAudio((v) => !v)}
               className={`flex items-center gap-1.5 rounded-md px-2.5 py-1.5 text-xs font-semibold transition ${
                 includeSystemAudio ? 'bg-[#23a55a]/15 text-[#57f287]' : 'bg-[#25262b] text-[#b5bac1]'

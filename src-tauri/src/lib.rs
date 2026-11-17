@@ -103,6 +103,7 @@ pub fn run() {
                     "quit" => app.exit(0),
                     _ => {}
                 })
+                
                 .on_tray_icon_event(|tray, event| {
                     if let TrayIconEvent::Click {
                         button: MouseButton::Left,

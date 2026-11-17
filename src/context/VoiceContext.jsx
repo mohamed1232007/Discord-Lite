@@ -24,12 +24,11 @@ const STREAM_AUDIO_STORAGE_KEY = 'dis_lite_stream_audio';
 const MEDIA_PERMISSION_STORAGE_KEY = 'dis_lite_media_permission_grants';
 const NOISE_LEVEL_STORAGE_KEY = 'dis_lite_noise_level';
 const LAST_WORKING_NOISE_LEVEL_STORAGE_KEY = 'dis_lite_last_working_noise_level';
-const NOISE_LEVELS = ['standard', 'voiceFocus', 'ai-noise', 'krisp'];
+const NOISE_LEVELS = ['standard', 'voiceFocus', 'krisp'];
 const NON_KRISP_NOISE_LEVELS = NOISE_LEVELS.filter((level) => level !== 'krisp');
 const NOISE_LEVEL_LABELS = {
   standard: 'Standard',
   voiceFocus: 'Voice Focus',
-  'ai-noise': 'AI Noise',
   krisp: 'Krisp',
 };
 
@@ -1189,7 +1188,7 @@ export const VoiceProvider = ({ children }) => {
 
           if (noiseSuppressionEnabledRef.current && !result.active) {
             await applyNativeNoiseFallback(rawStream);
-            toast.warning('AI noise suppression is unavailable; microphone noise reduction remains enabled.');
+            toast.warning('Noise suppression is unavailable; microphone noise reduction remains enabled.');
           }
         } catch (error) {
           console.warn('[NoiseSuppression] Could not start the denoise engine:', error);
@@ -1198,7 +1197,7 @@ export const VoiceProvider = ({ children }) => {
           noiseActive = false;
           if (noiseSuppressionEnabledRef.current) {
             await applyNativeNoiseFallback(rawStream);
-            toast.warning('AI noise suppression is unavailable; microphone noise reduction remains enabled.');
+            toast.warning('Noise suppression is unavailable; microphone noise reduction remains enabled.');
           }
         }
       }
@@ -2420,7 +2419,7 @@ export const VoiceProvider = ({ children }) => {
 
           if (enabled && !active) {
             await applyNativeNoiseFallback(rawMicStreamRef.current);
-            toast.warning('AI noise suppression could not start; microphone noise reduction remains enabled.');
+            toast.warning('Noise suppression could not start; microphone noise reduction remains enabled.');
           }
           if (engine.outputTrack) {
             await replacePublishedMicrophoneSource(publishedMicrophone, engine.outputTrack);
@@ -2452,7 +2451,7 @@ export const VoiceProvider = ({ children }) => {
           active = result.active;
           if (!active) {
             await applyNativeNoiseFallback(rawStream);
-            toast.warning('AI noise suppression could not start; microphone noise reduction remains enabled.');
+            toast.warning('Noise suppression could not start; microphone noise reduction remains enabled.');
           }
         }
       }
@@ -2484,10 +2483,7 @@ export const VoiceProvider = ({ children }) => {
         return false;
       }
       console.error('[NoiseSuppression] live switch failed:', error);
-      const errorMessage = error instanceof Error ? error.message : String(error);
-      toast.error(level === 'ai-noise'
-        ? `AI Noise could not start: ${errorMessage}`
-        : 'Could not change noise suppression for the live call.');
+      toast.error('Could not change noise suppression for the live call.');
       return false;
     }
   };
@@ -2496,7 +2492,7 @@ export const VoiceProvider = ({ children }) => {
     const next = !isNoiseSuppressionEnabled;
     noiseSuppressionEnabledRef.current = next;
     setIsNoiseSuppressionEnabled(next);
-    toast.info(next ? 'AI Noise Suppression enabled' : 'AI Noise Suppression disabled');
+    toast.info(next ? 'Noise suppression enabled' : 'Noise suppression disabled');
     await applyLiveNoiseSuppression(next, noiseLevelRef.current);
   };
 

@@ -30,7 +30,6 @@ const NOISE_LEVEL_OPTIONS = [
   { id: 'standard', title: 'Standard', badge: 'Default', desc: 'Balanced. Removes typing, fans and background hum while keeping your voice natural.' },
   { id: 'voiceFocus', title: 'Voice Focus', desc: 'GTCRN, device noise suppression, and Silero speech detection work together to reduce background noise and keyboard clicks while keeping speech audible.' },
   { id: 'krisp', title: 'Krisp', desc: 'LiveKit Krisp noise cancellation for your microphone.' },
-  { id: 'ai-noise', title: 'AI Noise', badge: 'In Development', desc: 'Uses your custom GTCRN model for microphone noise suppression.' },
 ];
 
 export default function SettingsPage({ onClose }) {
@@ -259,7 +258,7 @@ export default function SettingsPage({ onClose }) {
                   <div className="flex-1">
                     <p className="text-white text-sm font-semibold mb-1 flex items-center gap-2">
                       <Activity size={15} className={isNoiseSuppressionEnabled ? 'text-[#23a55a]' : 'text-[#80848e]'} />
-                      AI Noise Suppression
+                      Noise Suppression
                       {isNoiseSuppressionEnabled && (
                         <span className="text-[10px] bg-[#23a55a]/20 text-[#23a55a] px-1.5 py-0.5 rounded font-bold tracking-wide">
                           ON

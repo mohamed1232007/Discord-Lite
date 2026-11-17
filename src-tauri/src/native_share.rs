@@ -783,19 +783,20 @@ fn start_loopback_capture(
         .spawn(move || {
             let setup = (|| -> Result<_, String> {
                 use wasapi::{
-                    DeviceEnumerator, Direction, SampleType, StreamMode, WaveFormat, initialize_mta,
+                    AudioClient, Direction, SampleType, StreamMode, WaveFormat, initialize_mta,
                 };
                 initialize_mta()
                     .ok()
                     .map_err(|error| format!("COM initialization failed: {error}"))?;
-                let enumerator = DeviceEnumerator::new()
-                    .map_err(|error| format!("Audio device enumeration failed: {error}"))?;
-                let device = enumerator
-                    .get_default_device(&Direction::Render)
-                    .map_err(|error| format!("Default output device unavailable: {error}"))?;
-                let mut client = device
-                    .get_iaudioclient()
-                    .map_err(|error| format!("Could not open the output device: {error}"))?;
+                let mut client = AudioClient::new_application_loopback_client(
+                    std::process::id(),
+                    false,
+                )
+                .map_err(|error| {
+                    format!(
+                        "Could not initialize system-audio loopback without call audio: {error}"
+                    )
+                })?;
                 let format = WaveFormat::new(
                     32,
                     32,
@@ -804,20 +805,17 @@ fn start_loopback_capture(
                     LOOPBACK_CHANNELS as usize,
                     None,
                 );
-                let (_, minimum_period) = client
-                    .get_device_period()
-                    .map_err(|error| format!("Could not read the output-device period: {error}"))?;
                 client
                     .initialize_client(
                         &format,
                         &Direction::Capture,
                         &StreamMode::EventsShared {
                             autoconvert: true,
-                            buffer_duration_hns: minimum_period,
+                            buffer_duration_hns: 0,
                         },
                     )
                     .map_err(|error| {
-                        format!("Could not initialize system-audio loopback: {error}")
+                        format!("Could not initialize the system-audio loopback stream: {error}")
                     })?;
                 let event = client.set_get_eventhandle().map_err(|error| {
                     format!("Could not create the audio capture event: {error}")

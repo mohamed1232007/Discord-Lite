@@ -29,4 +29,5 @@ dist-ssr
 
 # Tauri build output and private updater signing key
 src-tauri/target/
+/target/
 src-tauri/updater.key
