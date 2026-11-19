@@ -18,6 +18,7 @@ import {
 import { useAuth } from '../context/AuthContext';
 import { useVoice } from '../context/VoiceContext';
 import { useToast } from '../context/ToastContext';
+import { useNotification } from '../context/NotificationContext';
 import { BACKEND_URL } from '../services/backendUrl';
 import SettingsPage from './SettingsPage';
 
@@ -76,8 +77,17 @@ export default function DMSidebar({
     endCall,
     playNotificationSound,
   } = useVoice();
+  const { showNotification } = useNotification();
+  const showNotificationRef = useRef(showNotification);
+  useEffect(() => {
+    showNotificationRef.current = showNotification;
+  }, [showNotification]);
 
   const [friends, setFriends] = useState([]);
+  const friendsRef = useRef([]);
+  useEffect(() => {
+    friendsRef.current = friends;
+  }, [friends]);
   const [showSettingsMenu, setShowSettingsMenu] = useState(false);
   const [showMicMenu, setShowMicMenu] = useState(false);
   const [showSpeakerMenu, setShowSpeakerMenu] = useState(false);
@@ -172,7 +182,7 @@ export default function DMSidebar({
     if (!token || !user?.id) return undefined;
 
     const pollUnreadMessages = async () => {
-      if (document.hidden || unreadPollInFlightRef.current) return;
+      if (unreadPollInFlightRef.current) return;
       unreadPollInFlightRef.current = true;
       const after = unreadCursorRef.current;
 
@@ -185,13 +195,73 @@ export default function DMSidebar({
         if (!response.ok) throw new Error(`Unread messages request failed (${response.status}).`);
 
         const data = await response.json();
-        const newUnreadMessages = Object.entries(data.unreadBySender || {}).some(
-          ([senderId, count]) => senderId !== selectedChatIdRef.current && count > 0,
-        );
-        if (after && newUnreadMessages) playNotificationSoundRef.current();
+        const unreadBySender = data.unreadBySender || {};
+        const latestMessages = data.latestMessages || [];
+
+        // تشغيل الإشعار للرسائل الجديدة
+        let handledNotification = false;
+        if (after && Array.isArray(latestMessages) && latestMessages.length > 0) {
+          latestMessages.forEach((msg) => {
+            const isCurrentChatActive = !document.hidden && document.hasFocus() && selectedChatIdRef.current === msg.senderId;
+            if (!isCurrentChatActive) {
+              handledNotification = true;
+              const sender = friendsRef.current.find((f) => f.id === msg.senderId) || {
+                id: msg.senderId,
+                username: 'Friend',
+                display_name: 'Friend',
+              };
+              showNotificationRef.current({
+                id: msg.id,
+                sender,
+                content: msg.content,
+                fileUrl: msg.fileUrl || msg.file_url,
+              });
+            }
+          });
+        }
+
+        // مسار بديل موثوق: في حال كان السيرفر الحالي يرجع unreadBySender فقط
+        if (!handledNotification && after && unreadBySender && typeof unreadBySender === 'object') {
+          const sendersNeedingFallback = Object.entries(unreadBySender).filter(([senderId, count]) => {
+            const isCurrentChatActive = !document.hidden && document.hasFocus() && selectedChatIdRef.current === senderId;
+            return count > 0 && !isCurrentChatActive;
+          });
+
+          await Promise.all(sendersNeedingFallback.map(async ([senderId]) => {
+            try {
+              const messagesResponse = await fetch(
+                `${BACKEND_URL}/messages/direct/${encodeURIComponent(senderId)}?limit=100`,
+                { headers: { Authorization: `Bearer ${token}` } },
+              );
+              if (!messagesResponse.ok) {
+                throw new Error(`Direct messages request failed (${messagesResponse.status}).`);
+              }
+
+              const { messages = [] } = await messagesResponse.json();
+              const latestIncomingMessage = messages
+                .filter((message) => message.sender_id === senderId)
+                .pop();
+              if (!latestIncomingMessage) return;
+
+              const sender = friendsRef.current.find((friend) => friend.id === senderId) || {
+                id: senderId,
+                username: 'Friend',
+                display_name: 'Friend',
+              };
+              showNotificationRef.current({
+                id: latestIncomingMessage.id,
+                sender,
+                content: latestIncomingMessage.content,
+                fileUrl: latestIncomingMessage.file_url,
+              });
+            } catch (error) {
+              console.error('[Notifications] Failed to load unread message content:', error);
+            }
+          }));
+        }
 
         const nextCounts = { ...unreadCountsRef.current };
-        Object.entries(data.unreadBySender || {}).forEach(([senderId, count]) => {
+        Object.entries(unreadBySender).forEach(([senderId, count]) => {
           if (senderId !== selectedChatIdRef.current) {
             nextCounts[senderId] = (nextCounts[senderId] || 0) + count;
           }
@@ -202,10 +272,9 @@ export default function DMSidebar({
         window.localStorage.setItem(`${UNREAD_STORAGE_KEY}:${user.id}`, JSON.stringify(nextCounts));
 
         // استخدام مؤشر السيرفر يمنع فقدان/تكرار العدّاد عند اختلاف ساعة الجهاز
-        if (data.cursor) {
-          unreadCursorRef.current = data.cursor;
-          window.localStorage.setItem(`${UNREAD_CURSOR_STORAGE_KEY}:${user.id}`, data.cursor);
-        }
+        const nextCursor = data.cursor || new Date().toISOString();
+        unreadCursorRef.current = nextCursor;
+        window.localStorage.setItem(`${UNREAD_CURSOR_STORAGE_KEY}:${user.id}`, nextCursor);
       } catch (error) {
         console.error('[Messages] Could not update unread counts:', error);
       } finally {
@@ -248,7 +317,7 @@ export default function DMSidebar({
   const activeParticipantCount = callParticipants?.filter((participant) => participant.status === 'active').length || 0;
 
   return (
-    <div className="w-64 bg-[#000000] border-r border-[#1e1f22]/30 flex flex-col h-full select-none shrink-0 font-sans">
+    <div className="w-64 bg-[var(--app-sidebar)] border-r border-[var(--app-border)] flex flex-col h-full select-none shrink-0 font-sans">
 
       {/* ── Search Bar ── */}
       <div className="h-12 px-2.5 flex items-center border-b border-[#111214]">
@@ -509,11 +578,11 @@ export default function DMSidebar({
         )}
 
         {/* ── User Footer Profile ── */}
-        <div className={activeCall ? 'border-t border-[#141517] px-2.5 pb-2' : 'px-2 pb-2'}>
-          <div className={`flex h-16 w-full items-center justify-between px-3 text-[#dbdee1] ${
+        <div className={activeCall ? 'border-t border-[var(--app-border)] px-2.5 pb-2' : 'px-2 pb-2'}>
+          <div className={`flex h-16 w-full items-center justify-between px-3 text-[var(--app-text)] ${
             activeCall
-              ? 'bg-[#050506]'
-              : 'rounded-xl border border-[#1e1f22] bg-[#050506]'
+              ? 'bg-[var(--app-surface)]'
+              : 'rounded-xl border border-[var(--app-border)] bg-[var(--app-surface)]'
           }`}>
             {user ? (
               <div
@@ -521,7 +590,7 @@ export default function DMSidebar({
                 title={`@${currentUsername}`}
               >
                 <div className="relative h-9 w-9 shrink-0">
-                  <div className={`h-9 w-9 overflow-hidden rounded-full bg-[#1e1f22] flex items-center justify-center text-xs font-semibold text-white transition-all duration-150 ${
+                  <div className={`h-9 w-9 overflow-hidden rounded-full bg-[var(--app-surface-raised)] flex items-center justify-center text-xs font-semibold text-[var(--app-text)] transition-all duration-150 ${
                     speakingUsers?.[user.id] ? 'speaking-ring' : ''
                   }`}>
                     {user.avatar_url ? (
@@ -534,18 +603,18 @@ export default function DMSidebar({
                       currentDisplayName.substring(0, 2).toUpperCase()
                     )}
                   </div>
-                  <span className="absolute -bottom-0.5 -right-0.5 h-3 w-3 rounded-full border-2 border-[#050506] bg-[#23a55a]" />
+                  <span className="absolute -bottom-0.5 -right-0.5 h-3 w-3 rounded-full border-2 border-[var(--app-surface)] bg-[#23a55a]" />
                 </div>
 
                 <div className="min-w-0 leading-tight">
-                  <div className="text-sm font-semibold text-[#dbdee1] truncate">{currentDisplayName}</div>
+                  <div className="text-sm font-semibold text-[var(--app-text)] truncate">{currentDisplayName}</div>
                   {activeCall ? (
-                    <div className="text-[11px] text-[#949ba4] font-normal flex items-center gap-1 leading-tight mt-0.5">
+                    <div className="text-[11px] text-[var(--app-text-muted)] font-normal flex items-center gap-1 leading-tight mt-0.5">
                       <span className="w-2 h-2 rounded-full bg-[#23a55a] shrink-0" />
                       In voice
                     </div>
                   ) : (
-                    <div className="text-[11px] text-[#949ba4] font-normal flex items-center gap-1 leading-tight mt-0.5">
+                    <div className="text-[11px] text-[var(--app-text-muted)] font-normal flex items-center gap-1 leading-tight mt-0.5">
                       <span className="w-2 h-2 rounded-full bg-[#23a55a] shrink-0" />
                       Online
                     </div>
@@ -563,7 +632,7 @@ export default function DMSidebar({
               </button>
             )}
 
-            <div className="flex items-center gap-1 text-[#b5bac1] shrink-0">
+            <div className="flex items-center gap-1 text-[var(--app-text-secondary)] shrink-0">
               {user ? (
                 <>
                   {/* Mute Split Button with Devices Dropdown */}
@@ -571,7 +640,7 @@ export default function DMSidebar({
                     <div className={`flex items-center rounded transition ${
                       isMuted
                         ? 'bg-[#3c191a] text-[#f23f43]'
-                        : 'hover:bg-[#18191c] text-[#949ba4] hover:text-white'
+                        : 'hover:bg-[var(--app-surface-hover)] text-[var(--app-text-muted)] hover:text-[var(--app-text)]'
                     }`}>
                       <button
                         type="button"
@@ -589,7 +658,7 @@ export default function DMSidebar({
                           setShowSpeakerMenu(false);
                           setShowSettingsMenu(false);
                         }}
-                        className="pr-1.5 py-1.5 cursor-pointer flex items-center justify-center text-[#80848e] hover:text-white"
+                        className="pr-1.5 py-1.5 cursor-pointer flex items-center justify-center text-[var(--app-text-subtle)] hover:text-[var(--app-text)]"
                         title="Select Input Device"
                       >
                         <ChevronDown size={11} className={isMuted ? 'text-[#f23f43]' : ''} />
@@ -638,7 +707,7 @@ export default function DMSidebar({
                     <div className={`flex items-center rounded transition ${
                       isDeafened
                         ? 'bg-[#3c191a] text-[#f23f43]'
-                        : 'hover:bg-[#18191c] text-[#949ba4] hover:text-white'
+                        : 'hover:bg-[var(--app-surface-hover)] text-[var(--app-text-muted)] hover:text-[var(--app-text)]'
                     }`}>
                       <button
                         type="button"
@@ -656,7 +725,7 @@ export default function DMSidebar({
                           setShowMicMenu(false);
                           setShowSettingsMenu(false);
                         }}
-                        className="pr-1.5 py-1.5 cursor-pointer flex items-center justify-center text-[#80848e] hover:text-white"
+                        className="pr-1.5 py-1.5 cursor-pointer flex items-center justify-center text-[var(--app-text-subtle)] hover:text-[var(--app-text)]"
                         title="Select Output Device"
                       >
                         <ChevronDown size={11} className={isDeafened ? 'text-[#f23f43]' : ''} />
@@ -706,7 +775,9 @@ export default function DMSidebar({
                       type="button"
                       onClick={() => setShowSettingsMenu((prev) => !prev)}
                       className={`p-1.5 rounded transition cursor-pointer ${
-                        showSettingsMenu ? 'bg-[#18191c] text-white' : 'hover:bg-[#18191c] hover:text-white'
+                        showSettingsMenu
+                          ? 'bg-[var(--app-surface-active)] text-[var(--app-text)]'
+                          : 'hover:bg-[var(--app-surface-hover)] hover:text-[var(--app-text)]'
                       }`}
                       title="User Settings"
                     >
@@ -715,20 +786,20 @@ export default function DMSidebar({
 
                     {/* Settings Popup Menu */}
                     {showSettingsMenu && (
-                      <div className="settings-menu-enter absolute bottom-9 right-0 z-50 flex w-44 flex-col gap-0.5 rounded-xl border border-white/10 bg-black p-1.5 shadow-2xl">
+                      <div className="settings-menu-enter absolute bottom-9 right-0 z-50 flex w-44 flex-col gap-0.5 rounded-xl border border-[var(--app-border)] bg-[var(--app-surface)] p-1.5 shadow-2xl">
                         <button
                           type="button"
                           onClick={() => {
                             setShowSettingsMenu(false);
                             setShowSettings(true);
                           }}
-                          className="w-full flex items-center gap-2.5 px-2.5 py-1.5 text-xs text-[#dbdee1] hover:text-white hover:bg-[#5865f2] rounded-lg transition text-left cursor-pointer font-medium"
+                          className="w-full flex items-center gap-2.5 px-2.5 py-1.5 text-xs text-[var(--app-text)] hover:text-white hover:bg-[#5865f2] rounded-lg transition text-left cursor-pointer font-medium"
                         >
                           <Settings size={14} />
                           <span>Settings</span>
                         </button>
 
-                        <div className="w-full h-[1px] bg-[#1e1f22] my-0.5" />
+                        <div className="w-full h-[1px] bg-[var(--app-border)] my-0.5" />
 
                         <button
                           type="button"

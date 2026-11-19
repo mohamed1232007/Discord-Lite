@@ -14,6 +14,7 @@ import {
 import { useAuth } from '../context/AuthContext';
 import { useVoice } from '../context/VoiceContext';
 import { useToast } from '../context/ToastContext';
+import { useNotification } from '../context/NotificationContext';
 import { BACKEND_URL } from '../services/backendUrl';
 import { UpdateActionButton } from './DiscordUpdater';
 
@@ -25,10 +26,28 @@ const sortByCreatedAt = (a, b) => {
   return String(a.id).localeCompare(String(b.id));
 };
 
-export default function ChatView({ user, onBack, onCallStarted, deferredUpdate, onOpenUpdate }) {
+export default function ChatView({
+  user,
+  targetMessageId,
+  onBack,
+  onCallStarted,
+  deferredUpdate,
+  onOpenUpdate,
+}) {
   const { user: currentUser, token, onlineUsers } = useAuth();
   const { startCall } = useVoice();
   const toast = useToast();
+  const { showNotification } = useNotification();
+  const showNotificationRef = useRef(showNotification);
+  const userRef = useRef(user);
+
+  useEffect(() => {
+    showNotificationRef.current = showNotification;
+  }, [showNotification]);
+
+  useEffect(() => {
+    userRef.current = user;
+  }, [user]);
 
   const isOnline = onlineUsers?.has(user.id);
   const displayName = user.display_name || user.username || user.name || 'Friend';
@@ -41,6 +60,8 @@ export default function ChatView({ user, onBack, onCallStarted, deferredUpdate, 
   const [loadingMore, setLoadingMore] = useState(false);
   const [sending, setSending] = useState(false);
   const messagesEndRef = useRef(null);
+  const messageElementsRef = useRef(new Map());
+  const loadedTargetMessageRef = useRef(null);
   const scrollContainerRef = useRef(null);
   const stickToBottomRef = useRef(true);
   const initialLoadDoneRef = useRef(false);
@@ -64,6 +85,18 @@ export default function ChatView({ user, onBack, onCallStarted, deferredUpdate, 
     }
   }, [messages]);
 
+  useLayoutEffect(() => {
+    if (!targetMessageId) return;
+    messageElementsRef.current.get(targetMessageId)?.scrollIntoView({
+      behavior: 'smooth',
+      block: 'center',
+    });
+  }, [messages, targetMessageId]);
+
+  useEffect(() => {
+    loadedTargetMessageRef.current = null;
+  }, [targetMessageId]);
+
   // جلب أحدث صفحة من الرسائل + دمجها مع ما تم تحميله مسبقاً
   const currentUserId = user?.id;
   const fetchMessages = useCallback(async () => {
@@ -79,29 +112,67 @@ export default function ChatView({ user, onBack, onCallStarted, deferredUpdate, 
         return;
       }
       const data = await res.json();
-      const latest = data.messages || [];
+      let latest = data.messages || [];
+      let latestHasMore = Boolean(data.hasMore);
+
+      if (targetMessageId && targetMessageId !== loadedTargetMessageRef.current) {
+        while (latestHasMore && !latest.some((message) => message.id === targetMessageId)) {
+          const oldestMessage = latest[0];
+          if (!oldestMessage) break;
+
+          const before = encodeURIComponent(oldestMessage.created_at);
+          const olderResponse = await fetch(
+            `${BACKEND_URL}/messages/direct/${currentUserId}?limit=${PAGE_SIZE}&before=${before}`,
+            { headers: { Authorization: `Bearer ${token}` } },
+          );
+          if (!olderResponse.ok) {
+            throw new Error(`Could not load the target message (${olderResponse.status}).`);
+          }
+
+          const olderData = await olderResponse.json();
+          const olderMessages = olderData.messages || [];
+          latest = [...olderMessages, ...latest];
+          latestHasMore = Boolean(olderData.hasMore);
+          if (olderMessages.length === 0) break;
+        }
+
+        loadedTargetMessageRef.current = targetMessageId;
+      }
 
       setMessages((previousMessages) => {
         if (previousMessages.length === 0) return latest;
         const knownIds = new Set(previousMessages.map((message) => message.id));
         const additions = latest.filter((message) => !knownIds.has(message.id));
         if (additions.length === 0) return previousMessages;
+
+        // التحقق من وصول رسائل جديدة من الطرف الآخر أثناء فتح المحادثة
+        const incomingAdditions = additions.filter((m) => m.sender_id === currentUserId);
+        if (incomingAdditions.length > 0 && initialLoadDoneRef.current) {
+          const lastIncoming = incomingAdditions[incomingAdditions.length - 1];
+          showNotificationRef.current({
+            id: lastIncoming.id,
+            sender: userRef.current,
+            content: lastIncoming.content,
+            fileUrl: lastIncoming.file_url,
+          });
+        }
+
         return [...previousMessages, ...additions].sort(sortByCreatedAt);
       });
 
       if (!initialLoadDoneRef.current) {
         initialLoadDoneRef.current = true;
-        setHasMore(Boolean(data.hasMore));
+        setHasMore(latestHasMore);
       }
     } catch (err) {
       console.error('Error fetching messages:', err);
     } finally {
       setLoading(false);
     }
-  }, [token, currentUserId]);
+  }, [token, currentUserId, targetMessageId]);
 
   // تحميل الرسائل الأقدم (pagination) مع الحفاظ على موضع التمرير
-  const loadOlderMessages = async () => {
+  const loadOlderMessages = useCallback(async () => {
     if (!hasMore || loadingMore || !token || messages.length === 0) return;
 
     const element = scrollContainerRef.current;
@@ -132,7 +203,7 @@ export default function ChatView({ user, onBack, onCallStarted, deferredUpdate, 
     } finally {
       setLoadingMore(false);
     }
-  };
+  }, [hasMore, loadingMore, token, messages, toast, user.id]);
 
   useEffect(() => {
     const timer = window.setTimeout(fetchMessages, 0);
@@ -144,7 +215,7 @@ export default function ChatView({ user, onBack, onCallStarted, deferredUpdate, 
     if (!currentUser?.id || !user?.id) return undefined;
 
     const poll = window.setInterval(() => {
-      if (!document.hidden) fetchMessages();
+      fetchMessages();
     }, 3000);
     const handleVisibilityChange = () => {
       if (!document.hidden) fetchMessages();
@@ -318,7 +389,16 @@ export default function ChatView({ user, onBack, onCallStarted, deferredUpdate, 
             const timeStr = m.created_at ? new Date(m.created_at).toLocaleTimeString([], { hour: '2-digit', minute: '2-digit' }) : 'Just now';
 
             return (
-              <div key={m.id} className="flex items-start gap-4 hover:bg-[#0c0d0e] -mx-4 px-4 py-1.5 rounded transition group">
+              <div
+                key={m.id}
+                ref={(element) => {
+                  if (element) messageElementsRef.current.set(m.id, element);
+                  else messageElementsRef.current.delete(m.id);
+                }}
+                className={`flex items-start gap-4 hover:bg-[#0c0d0e] -mx-4 px-4 py-1.5 rounded transition group ${
+                  targetMessageId === m.id ? 'bg-[#5865f2]/20 ring-1 ring-[#5865f2]/50' : ''
+                }`}
+              >
                 <div className={`w-10 h-10 rounded-full flex items-center justify-center font-bold text-xs text-white shrink-0 ${
                   isMe ? 'bg-[#5865f2]' : 'bg-[#1e1f22] border border-[#2b2d31]'
                 }`}>

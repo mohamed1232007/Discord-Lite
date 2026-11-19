@@ -1,6 +1,6 @@
 [package]
 name = "discord-lite"
-version = "3.2.9"
+version = "3.3.0"
 description = "A lightweight desktop chat and voice application."
 authors = ["Discord Lite contributors"]
 license = ""
@@ -25,6 +25,7 @@ tauri = { version = "2.12.5", features = ["tray-icon"] }
 tauri-plugin-log = "2"
 tauri-plugin-updater = "2"
 tauri-plugin-process = "2"
+tauri-plugin-deep-link = "2"
 tauri-plugin-single-instance = "2"
 livekit = { version = "0.10", features = ["rustls-tls-native-roots"] }
 tokio = { version = "1", features = ["rt-multi-thread", "sync"] }

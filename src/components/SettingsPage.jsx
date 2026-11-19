@@ -12,10 +12,15 @@ import {
   Keyboard,
   Monitor,
   Wifi,
-  ChevronDown
+  ChevronDown,
+  Palette,
+  RotateCcw,
 } from 'lucide-react';
 import { useVoice } from '../context/VoiceContext';
 import { useAuth } from '../context/AuthContext';
+import { useNotification } from '../context/NotificationContext';
+import { useAppearanceTheme } from '../context/ThemeContext';
+import { THEME_OPTIONS } from '../context/themeOptions';
 
 const SIDEBAR_ITEMS = [
   { id: 'account',    label: 'My Account',      icon: User,     group: 'USER SETTINGS' },
@@ -34,6 +39,11 @@ const NOISE_LEVEL_OPTIONS = [
 
 export default function SettingsPage({ onClose }) {
   const [activeTab, setActiveTab] = useState('voice');
+  const {
+    settings: notifSettings,
+    updateSettings: updateNotifSettings,
+    requestDesktopPermission,
+  } = useNotification();
   const {
     microphones,
     speakers,
@@ -54,6 +64,7 @@ export default function SettingsPage({ onClose }) {
     updateAudioDevices,
   } = useVoice();
   const { user, signOut } = useAuth();
+  const { themeMode, resolvedTheme, setThemeMode } = useAppearanceTheme();
 
   // Close on Escape
   useEffect(() => {
@@ -89,7 +100,7 @@ export default function SettingsPage({ onClose }) {
       {/* ─── Left Sidebar ─── */}
       <div
         className="w-[190px] shrink-0 flex flex-col sm:w-[236px]"
-        style={{ background: '#070708' }}
+        style={{ background: 'var(--app-sidebar)' }}
       >
         {/* top spacer */}
         <div className="h-14" />
@@ -370,8 +381,181 @@ export default function SettingsPage({ onClose }) {
               </div>
             )}
 
+            {/* ══════════════ NOTIFICATIONS TAB ══════════════ */}
+            {activeTab === 'notifs' && (
+              <div className="space-y-6">
+                <div>
+                  <h2 className="text-xl font-bold text-white">Notifications</h2>
+                  <p className="text-sm text-[#949ba4] mt-1">
+                    Manage desktop notifications and alert sounds.
+                  </p>
+                </div>
+
+                <div className="space-y-4">
+                  {/* 1. Desktop Notifications */}
+                  <div className="flex items-center justify-between p-4 rounded-xl bg-[#2b2d31]/50 border border-[#353740]">
+                    <div className="pr-4">
+                      <div className="font-semibold text-white text-sm">Enable Desktop Notifications</div>
+                      <div className="text-xs text-[#949ba4] mt-0.5 leading-relaxed">
+                        Receive operating system notifications when a message arrives while Discord Lite is minimized or in the background.
+                      </div>
+                    </div>
+                    <button
+                      type="button"
+                      onClick={async () => {
+                        if (!notifSettings.desktopNotifications) {
+                          await requestDesktopPermission();
+                        }
+                        updateNotifSettings({ desktopNotifications: !notifSettings.desktopNotifications });
+                      }}
+                      className={`relative shrink-0 w-11 h-6 rounded-full transition-colors duration-200 cursor-pointer focus:outline-none ${
+                        notifSettings.desktopNotifications ? 'bg-[#23a55a]' : 'bg-[#4f545c]'
+                      }`}
+                    >
+                      <span
+                        className={`absolute top-[3px] w-[18px] h-[18px] bg-white rounded-full shadow-sm transition-all duration-200 ${
+                          notifSettings.desktopNotifications ? 'left-[22px]' : 'left-[3px]'
+                        }`}
+                      />
+                    </button>
+                  </div>
+
+                  {/* 2. Notification Sounds */}
+                  <div className="flex items-center justify-between p-4 rounded-xl bg-[#2b2d31]/50 border border-[#353740]">
+                    <div className="pr-4">
+                      <div className="font-semibold text-white text-sm">Notification Sounds</div>
+                      <div className="text-xs text-[#949ba4] mt-0.5 leading-relaxed">
+                        Play an audio chime whenever you receive a new direct message.
+                      </div>
+                    </div>
+                    <button
+                      type="button"
+                      onClick={() => updateNotifSettings({ notificationSounds: !notifSettings.notificationSounds })}
+                      className={`relative shrink-0 w-11 h-6 rounded-full transition-colors duration-200 cursor-pointer focus:outline-none ${
+                        notifSettings.notificationSounds ? 'bg-[#23a55a]' : 'bg-[#4f545c]'
+                      }`}
+                    >
+                      <span
+                        className={`absolute top-[3px] w-[18px] h-[18px] bg-white rounded-full shadow-sm transition-all duration-200 ${
+                          notifSettings.notificationSounds ? 'left-[22px]' : 'left-[3px]'
+                        }`}
+                      />
+                    </button>
+                  </div>
+
+                </div>
+              </div>
+            )}
+
+            {activeTab === 'appearance' && (
+              <div>
+                <h2 className="text-white text-xl font-semibold mb-8 pb-4 border-b border-[#3f4147]">
+                  Appearance
+                </h2>
+
+                <section aria-labelledby="appearance-theme-heading">
+                  <div className="flex items-center justify-between gap-6 py-4 border-b border-[#3f4147]">
+                    <div className="flex items-start gap-3">
+                      <div className="mt-0.5 rounded-lg bg-[#5865f2]/15 p-2 text-[#aeb8ff]">
+                        <Palette size={18} aria-hidden="true" />
+                      </div>
+                      <div>
+                        <h3 id="appearance-theme-heading" className="text-sm font-semibold text-[#dbdee1]">
+                          Theme
+                        </h3>
+                        <p className="mt-1 max-w-md text-xs leading-relaxed text-[#949ba4]">
+                          Choose a color theme for the desktop app and website. Your choice is saved on this device.
+                        </p>
+                      </div>
+                    </div>
+
+                    <button
+                      type="button"
+                      role="switch"
+                      aria-checked={themeMode === 'system'}
+                      onClick={() => setThemeMode(themeMode === 'system' ? resolvedTheme : 'system')}
+                      className={`relative h-6 w-11 shrink-0 rounded-full transition-colors focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-[#5865f2] focus-visible:ring-offset-2 focus-visible:ring-offset-[var(--app-surface)] ${
+                        themeMode === 'system' ? 'bg-[#5865f2]' : 'bg-[#4e5058]'
+                      }`}
+                    >
+                      <span className={`absolute left-0.5 top-0.5 h-5 w-5 rounded-full bg-white shadow transition-[left] ${
+                        themeMode === 'system' ? 'left-[22px]' : ''
+                      }`} />
+                      <span className="sr-only">Use device theme</span>
+                    </button>
+                  </div>
+
+                  <div className="py-6">
+                    <div className="mb-4 flex items-center justify-between">
+                      <div>
+                        <h3 className="text-sm font-semibold text-[#dbdee1]">Default themes</h3>
+                        <p className="mt-1 text-xs text-[#949ba4]">
+                          {themeMode === 'system' ? 'Using your device setting' : 'Select a theme'}
+                        </p>
+                      </div>
+                      <button
+                        type="button"
+                        onClick={() => setThemeMode('midnight')}
+                        disabled={themeMode === 'midnight'}
+                        className="inline-flex items-center gap-1.5 rounded-md px-2.5 py-1.5 text-xs font-medium text-[#949ba4] transition hover:bg-[#2b2d31] hover:text-white disabled:cursor-not-allowed disabled:opacity-50"
+                        title="Reset to Midnight"
+                      >
+                        <RotateCcw size={13} aria-hidden="true" />
+                        Reset
+                      </button>
+                    </div>
+
+                    <div className="grid grid-cols-2 gap-3 sm:grid-cols-4" role="group" aria-label="Default themes">
+                      {THEME_OPTIONS.map((option) => {
+                        const selected = themeMode === option.id
+                          || (themeMode === 'system' && resolvedTheme === option.id);
+
+                        return (
+                          <button
+                            key={option.id}
+                            type="button"
+                            aria-pressed={selected}
+                            onClick={() => setThemeMode(option.id)}
+                            className={`group cursor-pointer rounded-lg border p-2 text-left transition focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-[#5865f2] ${
+                              selected
+                                ? 'border-[#5865f2] bg-[#5865f2]/10'
+                                : 'border-[#3f4147] hover:border-[#5865f2]/60'
+                            }`}
+                          >
+                            <span
+                              className="relative mb-2 flex h-16 items-center justify-center overflow-hidden rounded-md border border-black/10"
+                              style={{ backgroundColor: option.swatch }}
+                              aria-hidden="true"
+                            >
+                              <span
+                                className="h-2 w-10 rounded-full opacity-70"
+                                style={{ backgroundColor: option.text }}
+                              />
+                              <span
+                                className="absolute bottom-2 left-2 h-2 w-5 rounded-full opacity-40"
+                                style={{ backgroundColor: option.text }}
+                              />
+                              {selected && (
+                                <span className="absolute right-1.5 top-1.5 flex h-5 w-5 items-center justify-center rounded-full bg-[#5865f2] text-white">
+                                  <Check size={12} aria-hidden="true" />
+                                </span>
+                              )}
+                            </span>
+                            <span className="block text-xs font-medium text-[#dbdee1]">{option.label}</span>
+                          </button>
+                        );
+                      })}
+                    </div>
+                    <p className="sr-only" role="status" aria-live="polite">
+                      {themeMode === 'system' ? 'Theme follows your device setting.' : `${themeMode} theme selected.`}
+                    </p>
+                  </div>
+                </section>
+              </div>
+            )}
+
             {/* ══════════════ PLACEHOLDER TABS ══════════════ */}
-            {['notifs', 'appearance', 'privacy', 'keybinds'].includes(activeTab) && (
+            {['privacy', 'keybinds'].includes(activeTab) && (
               <div className="flex flex-col items-center justify-center h-80 text-center gap-4">
                 <div className="w-16 h-16 rounded-full bg-[#2b2d31] flex items-center justify-center">
                   <Wifi size={28} className="text-[#5865f2]" />
