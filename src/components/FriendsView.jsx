@@ -102,19 +102,6 @@ export default function FriendsView({ onStartChat, deferredUpdate, onOpenUpdate 
     }
   }, [addSearchInput, token]);
 
-  useEffect(() => {
-    const timer = setTimeout(() => {
-      if (addSearchInput.trim()) {
-        handleSearchUsers();
-      } else {
-        setSearchResults([]);
-        setSearchFeedback('');
-      }
-    }, 350);
-
-    return () => clearTimeout(timer);
-  }, [addSearchInput, handleSearchUsers]);
-
   const handleSendRequest = async (targetUserId) => {
     try {
       const res = await fetch(`${BACKEND_URL}/friends/request`, {

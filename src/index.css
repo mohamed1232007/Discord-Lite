@@ -1,5 +1,16 @@
 @import "tailwindcss";
 
+/* ── In-app notification toast slide-up ── */
+@keyframes dlNotifSlideUp {
+  from { opacity: 0; transform: translateY(1rem) scale(0.96); }
+  to   { opacity: 1; transform: translateY(0) scale(1); }
+}
+
+@keyframes dlNotifSlideIn {
+  from { opacity: 0; transform: translateX(calc(100% + 1rem)); }
+  to   { opacity: 1; transform: translateX(0); }
+}
+
 @keyframes landing-hero-float {
   0%, 100% {
     transform: translateY(0);
@@ -456,6 +467,97 @@ body {
   --app-landing-start: #232428;
   --app-landing-middle: #2b2d31;
   --app-landing-end: #313338;
+}
+
+:root[data-app-theme="midnight"] {
+  color-scheme: dark;
+  --app-background: #000000;
+  --app-sidebar: #000000;
+  --app-surface: #050506;
+  --app-surface-raised: #0b0c0e;
+  --app-surface-hover: #18191c;
+  --app-surface-active: #111214;
+  --app-border: #111214;
+  --app-border-strong: #232428;
+  --app-text: #f2f3f5;
+  --app-text-secondary: #dbdee1;
+  --app-text-muted: #b5bac1;
+  --app-text-subtle: #949ba4;
+  --app-landing-start: #000000;
+  --app-landing-middle: #050506;
+  --app-landing-end: #0b0b0d;
+}
+
+:root[data-app-theme="light"] .voice-call-title,
+:root[data-app-theme="ash"] .voice-call-title {
+  color: #15803d;
+}
+
+:root[data-app-theme="light"] .voice-call-title:hover,
+:root[data-app-theme="ash"] .voice-call-title:hover {
+  color: #166534;
+}
+
+:root[data-app-theme] .call-stage-name,
+:root[data-app-theme] .call-stage-status,
+:root[data-app-theme] .call-stage-deafened {
+  background-color: var(--app-surface-active);
+}
+
+:root[data-app-theme] .call-stage-name,
+:root[data-app-theme] .call-stage-deafened {
+  color: var(--app-text);
+}
+
+:root[data-app-theme="light"] .call-stage-status[data-state="muted"],
+:root[data-app-theme="ash"] .call-stage-status[data-state="muted"] {
+  color: #991b1b;
+}
+
+:root[data-app-theme="dark"] .call-stage-status[data-state="muted"],
+:root[data-app-theme="midnight"] .call-stage-status[data-state="muted"] {
+  color: #ff6b70;
+}
+
+:root[data-app-theme="light"] .call-stage-status[data-state="deafened"],
+:root[data-app-theme="ash"] .call-stage-status[data-state="deafened"],
+:root[data-app-theme="light"] .call-stage-deafened,
+:root[data-app-theme="ash"] .call-stage-deafened {
+  color: #713f12;
+}
+
+:root[data-app-theme="dark"] .call-stage-status[data-state="deafened"],
+:root[data-app-theme="midnight"] .call-stage-status[data-state="deafened"] {
+  color: #ffd166;
+}
+
+:root[data-app-theme="light"] .call-stage-status[data-state="noise"],
+:root[data-app-theme="ash"] .call-stage-status[data-state="noise"],
+:root[data-app-theme="light"] .call-stage-status[data-state="video"],
+:root[data-app-theme="ash"] .call-stage-status[data-state="video"],
+:root[data-app-theme="light"] .call-stage-status[data-state="connected"],
+:root[data-app-theme="ash"] .call-stage-status[data-state="connected"] {
+  color: #14532d;
+}
+
+:root[data-app-theme="dark"] .call-stage-status[data-state="noise"],
+:root[data-app-theme="midnight"] .call-stage-status[data-state="noise"],
+:root[data-app-theme="dark"] .call-stage-status[data-state="video"],
+:root[data-app-theme="midnight"] .call-stage-status[data-state="video"],
+:root[data-app-theme="dark"] .call-stage-status[data-state="connected"],
+:root[data-app-theme="midnight"] .call-stage-status[data-state="connected"] {
+  color: #57f287;
+}
+
+:root[data-app-theme="light"] .screen-share-audio-toggle[aria-checked="true"],
+:root[data-app-theme="ash"] .screen-share-audio-toggle[aria-checked="true"] {
+  background-color: #dcfce7;
+  color: #166534;
+}
+
+:root[data-app-theme="light"] .screen-share-error,
+:root[data-app-theme="ash"] .screen-share-error {
+  color: #b4232a;
 }
 
 :root[data-app-theme] [class~="bg-[#000000]"],

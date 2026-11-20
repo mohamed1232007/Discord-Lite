@@ -75,7 +75,6 @@ export default function DMSidebar({
     toggleCamera,
     toggleScreenShare,
     endCall,
-    playNotificationSound,
   } = useVoice();
   const { showNotification } = useNotification();
   const showNotificationRef = useRef(showNotification);
@@ -109,16 +108,26 @@ export default function DMSidebar({
   const unreadCursorRef = useRef(null);
   const unreadPollInFlightRef = useRef(false);
   const selectedChatIdRef = useRef(isChatVisible ? selectedChat?.id : null);
-  const playNotificationSoundRef = useRef(playNotificationSound);
-
-  useEffect(() => {
-    playNotificationSoundRef.current = playNotificationSound;
-  }, [playNotificationSound]);
-
   // إغلاق القوائم عند النقر في أي مكان خارجها
   useEffect(() => {
     selectedChatIdRef.current = isChatVisible ? selectedChat?.id : null;
   }, [isChatVisible, selectedChat?.id]);
+
+  // مسح علامة الأنريد تلقائياً لما يفتح المستخدم أي محادثة (من أي مسار)
+  useEffect(() => {
+    if (!isChatVisible || !selectedChat?.id || !user?.id) return;
+    const friendId = selectedChat.id;
+    if (!unreadCountsRef.current[friendId]) return;
+    const nextCounts = { ...unreadCountsRef.current };
+    delete nextCounts[friendId];
+    unreadCountsRef.current = nextCounts;
+    setUnreadState({ userId: user.id, counts: nextCounts });
+    try {
+      window.localStorage.setItem(`${UNREAD_STORAGE_KEY}:${user.id}`, JSON.stringify(nextCounts));
+    } catch (err) {
+      console.warn('[Messages] Could not clear unread state:', err);
+    }
+  }, [isChatVisible, selectedChat?.id, user?.id]);
 
   useEffect(() => {
     const handleClickOutside = (e) => {
@@ -146,7 +155,13 @@ export default function DMSidebar({
         });
         if (res.ok) {
           const data = await res.json();
-          setFriends(data.friends || []);
+          const list = data.friends || [];
+          setFriends(list);
+          try {
+            window.localStorage.setItem('dis_lite_friends_cache', JSON.stringify(list));
+          } catch (err) {
+            console.warn('[Friends] Failed to cache friends:', err);
+          }
         }
       } catch (err) {
         console.error('Failed to load friends:', err);
@@ -205,11 +220,14 @@ export default function DMSidebar({
             const isCurrentChatActive = !document.hidden && document.hasFocus() && selectedChatIdRef.current === msg.senderId;
             if (!isCurrentChatActive) {
               handledNotification = true;
-              const sender = friendsRef.current.find((f) => f.id === msg.senderId) || {
-                id: msg.senderId,
-                username: 'Friend',
-                display_name: 'Friend',
-              };
+              const sender = msg.sender
+                || friendsRef.current.find((f) => f.id === msg.senderId)
+                || {
+                  id: msg.senderId,
+                  username: msg.senderName || 'Friend',
+                  display_name: msg.senderName || 'Friend',
+                  avatar_url: msg.senderAvatarUrl || null,
+                };
               showNotificationRef.current({
                 id: msg.id,
                 sender,
@@ -317,7 +335,7 @@ export default function DMSidebar({
   const activeParticipantCount = callParticipants?.filter((participant) => participant.status === 'active').length || 0;
 
   return (
-    <div className="w-64 bg-[var(--app-sidebar)] border-r border-[var(--app-border)] flex flex-col h-full select-none shrink-0 font-sans">
+    <div className="w-64 bg-(--app-sidebar) border-r border-(--app-border) flex flex-col h-full select-none shrink-0 font-sans">
 
       {/* ── Search Bar ── */}
       <div className="h-12 px-2.5 flex items-center border-b border-[#111214]">
@@ -456,10 +474,10 @@ export default function DMSidebar({
       </div>
 
       {/* ── Discord Official Voice Connected Bottom Module (تطابق كامل 100%) ── */}
-      <div className={`relative z-20 -ml-12 w-[calc(100%+3rem)] shrink-0 ${
+      <div className={`relative z-20 shrink-0 ${
         activeCall
-          ? 'mb-2 overflow-hidden rounded-xl border border-[#1e1f22] bg-[#050506]'
-          : 'border-t border-[#111214] bg-[#070708]'
+          ? '-ml-14 w-[calc(100%+3.5rem)] rounded-t-xl border-x border-t border-[#1e1f22] bg-[#050506]'
+          : '-ml-14 w-[calc(100%+3.5rem)] border-t border-[#111214] bg-[#070708]'
       }`}>
         
         {/* صندوق الـ Voice Connected */}
@@ -477,7 +495,7 @@ export default function DMSidebar({
                   <button
                     type="button"
                     onClick={onShowCall}
-                    className="text-left text-[#23a55a] text-xs font-bold leading-tight tracking-wide hover:text-white transition cursor-pointer"
+                    className="voice-call-title -ml-1 rounded px-1 py-0.5 text-left text-[#23a55a] text-xs font-bold leading-tight tracking-wide transition cursor-pointer focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-[#5865f2] focus-visible:ring-offset-2 focus-visible:ring-offset-(--app-background)"
                     title="Return to voice call"
                   >
                     Voice Call
@@ -557,20 +575,12 @@ export default function DMSidebar({
               {/* 4. Soundboard */}
               <button
                 type="button"
-                onClick={() => {
-                  const ctx = new AudioContext();
-                  const osc = ctx.createOscillator();
-                  osc.type = 'triangle';
-                  osc.frequency.value = 520;
-                  osc.connect(ctx.destination);
-                  osc.start();
-                  osc.stop(ctx.currentTime + 0.2);
-                }}
+                onClick={() => toast.info('Under development')}
                 className="h-8 bg-[#18191c] hover:bg-[#2b2d31] text-[#dbdee1] hover:text-white rounded flex items-center justify-center transition cursor-pointer"
-                title="Open Soundboard"
+                title="Under development"
               >
                 <svg className="w-4 h-4 fill-current" viewBox="0 0 24 24">
-                  <path d="M12 2C6.48 2 2 6.48 2 12s4.48 10 10 10 10-4.48 10-10S17.52 2 12 2zm1 15h-2v-2h2v2zm0-4h-2V7h2v6z"/>
+                  <path d="M12 2a10 10 0 1 0 10 10A10 10 0 0 0 12 2zm1 14.5h-2v-2h2zm0-4h-2V7h2z"/>
                 </svg>
               </button>
             </div>
@@ -578,11 +588,11 @@ export default function DMSidebar({
         )}
 
         {/* ── User Footer Profile ── */}
-        <div className={activeCall ? 'border-t border-[var(--app-border)] px-2.5 pb-2' : 'px-2 pb-2'}>
-          <div className={`flex h-16 w-full items-center justify-between px-3 text-[var(--app-text)] ${
+        <div className={activeCall ? 'mb-2 w-full rounded-b-xl border-x border-b border-(--app-border) px-2.5 pb-2' : 'w-full px-2 pb-2'}>
+          <div className={`flex h-16 w-full items-center justify-between text-(--app-text) ${
             activeCall
-              ? 'bg-[var(--app-surface)]'
-              : 'rounded-xl border border-[var(--app-border)] bg-[var(--app-surface)]'
+              ? 'rounded-b-xl bg-(--app-surface) px-3'
+              : 'rounded-xl border border-(--app-border) bg-(--app-surface) px-3'
           }`}>
             {user ? (
               <div
@@ -590,7 +600,7 @@ export default function DMSidebar({
                 title={`@${currentUsername}`}
               >
                 <div className="relative h-9 w-9 shrink-0">
-                  <div className={`h-9 w-9 overflow-hidden rounded-full bg-[var(--app-surface-raised)] flex items-center justify-center text-xs font-semibold text-[var(--app-text)] transition-all duration-150 ${
+                  <div className={`h-9 w-9 overflow-hidden rounded-full bg-(--app-surface-raised) flex items-center justify-center text-xs font-semibold text-(--app-text) transition-all duration-150 ${
                     speakingUsers?.[user.id] ? 'speaking-ring' : ''
                   }`}>
                     {user.avatar_url ? (
@@ -603,18 +613,18 @@ export default function DMSidebar({
                       currentDisplayName.substring(0, 2).toUpperCase()
                     )}
                   </div>
-                  <span className="absolute -bottom-0.5 -right-0.5 h-3 w-3 rounded-full border-2 border-[var(--app-surface)] bg-[#23a55a]" />
+                  <span className="absolute -bottom-0.5 -right-0.5 h-3 w-3 rounded-full border-2 border-(--app-surface) bg-[#23a55a]" />
                 </div>
 
                 <div className="min-w-0 leading-tight">
-                  <div className="text-sm font-semibold text-[var(--app-text)] truncate">{currentDisplayName}</div>
+                  <div className="text-sm font-semibold text-(--app-text) truncate">{currentDisplayName}</div>
                   {activeCall ? (
-                    <div className="text-[11px] text-[var(--app-text-muted)] font-normal flex items-center gap-1 leading-tight mt-0.5">
+                    <div className="text-[11px] text-(--app-text-muted) font-normal flex items-center gap-1 leading-tight mt-0.5">
                       <span className="w-2 h-2 rounded-full bg-[#23a55a] shrink-0" />
                       In voice
                     </div>
                   ) : (
-                    <div className="text-[11px] text-[var(--app-text-muted)] font-normal flex items-center gap-1 leading-tight mt-0.5">
+                    <div className="text-[11px] text-(--app-text-muted) font-normal flex items-center gap-1 leading-tight mt-0.5">
                       <span className="w-2 h-2 rounded-full bg-[#23a55a] shrink-0" />
                       Online
                     </div>
@@ -632,23 +642,21 @@ export default function DMSidebar({
               </button>
             )}
 
-            <div className="flex items-center gap-1 text-[var(--app-text-secondary)] shrink-0">
+            <div className="flex items-center gap-1 text-(--app-text-secondary) shrink-0">
               {user ? (
                 <>
                   {/* Mute Split Button with Devices Dropdown */}
                   <div className="relative" ref={micMenuRef}>
-                    <div className={`flex items-center rounded transition ${
-                      isMuted
-                        ? 'bg-[#3c191a] text-[#f23f43]'
-                        : 'hover:bg-[var(--app-surface-hover)] text-[var(--app-text-muted)] hover:text-[var(--app-text)]'
-                    }`}>
+                    <div className="flex items-center bg-[#1e1f22] rounded-lg">
                       <button
                         type="button"
                         onClick={toggleMute}
-                        className="p-1.5 cursor-pointer flex items-center justify-center"
+                        className={`p-1.5 transition flex items-center justify-center cursor-pointer rounded-l-lg ${
+                          isMuted ? 'text-[#f23f43] bg-[#f23f43]/20 hover:bg-[#f23f43]/30' : 'text-white hover:bg-[#2b2d31]'
+                        }`}
                         title={isMuted ? 'Unmute' : 'Mute'}
                       >
-                        {isMuted ? <MicOff size={17} className="text-[#f23f43]" /> : <Mic size={17} />}
+                        {isMuted ? <MicOff size={17} /> : <Mic size={17} />}
                       </button>
                       <button
                         type="button"
@@ -658,10 +666,12 @@ export default function DMSidebar({
                           setShowSpeakerMenu(false);
                           setShowSettingsMenu(false);
                         }}
-                        className="pr-1.5 py-1.5 cursor-pointer flex items-center justify-center text-[var(--app-text-subtle)] hover:text-[var(--app-text)]"
+                        className={`px-1.5 py-1.5 text-[#80848e] hover:text-white hover:bg-[#2b2d31] transition cursor-pointer rounded-r-lg ${
+                          showMicMenu ? 'bg-[#2b2d31] text-white' : ''
+                        }`}
                         title="Select Input Device"
                       >
-                        <ChevronDown size={11} className={isMuted ? 'text-[#f23f43]' : ''} />
+                        <ChevronDown size={11} />
                       </button>
                     </div>
 
@@ -704,18 +714,16 @@ export default function DMSidebar({
 
                   {/* Deafen Split Button with Devices Dropdown */}
                   <div className="relative" ref={speakerMenuRef}>
-                    <div className={`flex items-center rounded transition ${
-                      isDeafened
-                        ? 'bg-[#3c191a] text-[#f23f43]'
-                        : 'hover:bg-[var(--app-surface-hover)] text-[var(--app-text-muted)] hover:text-[var(--app-text)]'
-                    }`}>
+                    <div className="flex items-center bg-[#1e1f22] rounded-lg">
                       <button
                         type="button"
                         onClick={toggleDeafen}
-                        className="p-1.5 cursor-pointer flex items-center justify-center"
+                        className={`p-1.5 rounded-l-lg transition cursor-pointer ${
+                          isDeafened ? 'text-[#f23f43] bg-[#f23f43]/20 hover:bg-[#f23f43]/30' : 'text-[#dbdee1] hover:text-white hover:bg-[#2b2d31]'
+                        }`}
                         title={isDeafened ? 'Undeafen' : 'Deafen'}
                       >
-                        {isDeafened ? <VolumeX size={17} className="text-[#f23f43]" /> : <Headphones size={17} />}
+                        {isDeafened ? <VolumeX size={17} /> : <Headphones size={17} />}
                       </button>
                       <button
                         type="button"
@@ -725,10 +733,12 @@ export default function DMSidebar({
                           setShowMicMenu(false);
                           setShowSettingsMenu(false);
                         }}
-                        className="pr-1.5 py-1.5 cursor-pointer flex items-center justify-center text-[var(--app-text-subtle)] hover:text-[var(--app-text)]"
+                        className={`px-1.5 py-1.5 text-[#80848e] hover:text-white hover:bg-[#2b2d31] transition cursor-pointer rounded-r-lg ${
+                          showSpeakerMenu ? 'bg-[#2b2d31] text-white' : ''
+                        }`}
                         title="Select Output Device"
                       >
-                        <ChevronDown size={11} className={isDeafened ? 'text-[#f23f43]' : ''} />
+                        <ChevronDown size={11} />
                       </button>
                     </div>
 
@@ -776,8 +786,8 @@ export default function DMSidebar({
                       onClick={() => setShowSettingsMenu((prev) => !prev)}
                       className={`p-1.5 rounded transition cursor-pointer ${
                         showSettingsMenu
-                          ? 'bg-[var(--app-surface-active)] text-[var(--app-text)]'
-                          : 'hover:bg-[var(--app-surface-hover)] hover:text-[var(--app-text)]'
+                          ? 'bg-(--app-surface-active) text-(--app-text)'
+                          : 'hover:bg-(--app-surface-hover) hover:text-(--app-text)'
                       }`}
                       title="User Settings"
                     >
@@ -786,20 +796,20 @@ export default function DMSidebar({
 
                     {/* Settings Popup Menu */}
                     {showSettingsMenu && (
-                      <div className="settings-menu-enter absolute bottom-9 right-0 z-50 flex w-44 flex-col gap-0.5 rounded-xl border border-[var(--app-border)] bg-[var(--app-surface)] p-1.5 shadow-2xl">
+                      <div className="settings-menu-enter absolute bottom-9 right-0 z-50 flex w-44 flex-col gap-0.5 rounded-xl border border-(--app-border) bg-(--app-surface) p-1.5 shadow-2xl">
                         <button
                           type="button"
                           onClick={() => {
                             setShowSettingsMenu(false);
                             setShowSettings(true);
                           }}
-                          className="w-full flex items-center gap-2.5 px-2.5 py-1.5 text-xs text-[var(--app-text)] hover:text-white hover:bg-[#5865f2] rounded-lg transition text-left cursor-pointer font-medium"
+                          className="w-full flex items-center gap-2.5 px-2.5 py-1.5 text-xs text-(--app-text) hover:text-white hover:bg-[#5865f2] rounded-lg transition text-left cursor-pointer font-medium"
                         >
                           <Settings size={14} />
                           <span>Settings</span>
                         </button>
 
-                        <div className="w-full h-[1px] bg-[var(--app-border)] my-0.5" />
+                        <div className="w-full h-px bg-(--app-border) my-0.5" />
 
                         <button
                           type="button"

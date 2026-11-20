@@ -163,20 +163,24 @@ function MainApp({ deferredUpdate, onOpenUpdate }) {
 
     let disposed = false;
     let unlisten;
-    listen('notification-open', (event) => {
-      setNotificationTarget(event.payload);
-    }).then((stopListening) => {
-      if (disposed) stopListening();
-      else unlisten = stopListening;
-    }).catch((error) => {
-      console.error('[Notifications] Could not listen for notification clicks:', error);
-    });
+    const listenForNotificationTargets = async () => {
+      try {
+        unlisten = await listen('notification-open', (event) => {
+          setNotificationTarget(event.payload);
+        });
+        if (disposed) {
+          unlisten();
+          return;
+        }
 
-    invoke('take_notification_target').then((target) => {
-      if (!disposed && target) setNotificationTarget(target);
-    }).catch((error) => {
-      console.error('[Notifications] Could not read the initial notification destination:', error);
-    });
+        const target = await invoke('take_notification_target');
+        if (!disposed && target) setNotificationTarget(target);
+      } catch (error) {
+        console.error('[Notifications] Could not initialize notification navigation:', error);
+      }
+    };
+
+    void listenForNotificationTargets();
 
     return () => {
       disposed = true;
@@ -192,6 +196,22 @@ function MainApp({ deferredUpdate, onOpenUpdate }) {
 
     const openNotificationDestination = async () => {
       try {
+        // 1. فتح فوري بدون أي تأخير إذا كان الصديق مخزن مسبقاً
+        let friend = null;
+        try {
+          const cached = JSON.parse(window.localStorage.getItem('dis_lite_friends_cache') || '[]');
+          friend = cached.find((c) => c.id === notificationTarget.friendId) || null;
+        } catch (cacheErr) {
+          console.warn('[Notifications] Could not read cached friends:', cacheErr);
+        }
+
+        if (friend) {
+          setActiveTab('dm');
+          openChat(friend, notificationTarget.messageId);
+          return;
+        }
+
+        // 2. وإذا لم يكن في الكاش، نجلبه من السيرفر ونفتح المحادثة
         const response = await fetch(`${BACKEND_URL}/friends`, {
           headers: { Authorization: `Bearer ${token}` },
         });
@@ -200,7 +220,7 @@ function MainApp({ deferredUpdate, onOpenUpdate }) {
         }
 
         const { friends = [] } = await response.json();
-        const friend = friends.find((candidate) => candidate.id === notificationTarget.friendId);
+        friend = friends.find((candidate) => candidate.id === notificationTarget.friendId);
         if (!friend) {
           throw new Error('The sender is no longer available in your friends list.');
         }
@@ -288,7 +308,7 @@ function MainApp({ deferredUpdate, onOpenUpdate }) {
               ) : null}
 
               {selectedChat ? (
-                <div className={activeCall && !isChatVisible ? 'hidden' : 'flex min-w-0 flex-1'}>
+                <div className={activeCall && !isChatVisible ? 'hidden' : 'flex min-w-0 flex-1 transition-opacity duration-200 ease-out'}>
                   <ChatView
                     key={selectedChat.id}
                     user={selectedChat}

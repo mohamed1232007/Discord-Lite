@@ -9,6 +9,9 @@ on:
 permissions:
   contents: read
 
+env:
+  CARGO_TARGET_DIR: ${{ github.workspace }}\src-tauri\target
+
 jobs:
   build:
     runs-on: windows-latest

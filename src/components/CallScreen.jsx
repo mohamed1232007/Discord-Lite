@@ -378,7 +378,7 @@ export default function CallScreen({ onOpenChat, deferredUpdate, onOpenUpdate })
       ? createPortal(
         <div
           ref={participantMenuRef}
-          className="fixed z-[100] w-64 rounded-xl border border-[#353740] bg-[#17181c] p-2.5 text-[#dbdee1] shadow-[0_12px_40px_rgba(0,0,0,0.65)]"
+          className="fixed z-100 w-64 rounded-xl border border-[#353740] bg-[#17181c] p-2.5 text-[#dbdee1] shadow-[0_12px_40px_rgba(0,0,0,0.65)]"
           style={{
             top: Math.max(8, participantMenuPosition.top - 205),
             right: Math.max(8, participantMenuPosition.right),
@@ -465,7 +465,7 @@ export default function CallScreen({ onOpenChat, deferredUpdate, onOpenUpdate })
               });
               setOpenParticipantMenuId(participant.user_id);
             }}
-            className="flex h-9 w-9 items-center justify-center rounded-lg border border-white/10 bg-black/75 text-white shadow-lg transition hover:bg-[#2b2d31]"
+            className="flex h-9 w-9 items-center justify-center rounded-lg border border-(--app-border) bg-(--app-surface-active) text-(--app-text-secondary) shadow-lg transition hover:bg-(--app-surface-hover) hover:text-(--app-text)"
             title={`Options for ${participantName}`}
             aria-label={`Options for ${participantName}`}
             aria-expanded={isOpen}
@@ -802,7 +802,7 @@ export default function CallScreen({ onOpenChat, deferredUpdate, onOpenUpdate })
           </div>
         ) : isVideoCallActive ? (
           /* حالة 2: عرض فيديو كل أعضاء المكالمة */
-          <div className="grid w-full max-w-[860px] grid-cols-1 place-items-center gap-3 sm:grid-cols-2">
+          <div className="grid w-full max-w-215 grid-cols-1 place-items-center gap-3 sm:grid-cols-2">
             {activeParticipants.map((participant) => {
               const isLocal = participant.user_id === currentUser?.id;
               const participantUser = participant.user || {};
@@ -815,7 +815,7 @@ export default function CallScreen({ onOpenChat, deferredUpdate, onOpenUpdate })
                 : getRemoteStream(participant.user_id, 'cameraStream');
               const cameraVisible = !!state.camera && (isLocal || !!remoteVideoStream);
               return (
-                <div key={participant.user_id} className="group relative aspect-video w-full max-w-[420px] overflow-hidden rounded-xl border border-[#1e1f22] bg-[#09080c] shadow-2xl transition-all hover:border-[#2b2d31]">
+                <div key={participant.user_id} className="group relative aspect-video w-full max-w-105 overflow-hidden rounded-xl border border-[#1e1f22] bg-[#09080c] shadow-2xl transition-all hover:border-[#2b2d31]">
                   {cameraVisible && (
                     <video
                       ref={(element) => setVideoStream(
@@ -845,12 +845,15 @@ export default function CallScreen({ onOpenChat, deferredUpdate, onOpenUpdate })
                       </div>
                     </div>
                   )}
-                  <div className="absolute bottom-3 left-3 max-w-[70%] truncate rounded-md bg-black/75 px-2.5 py-1.5 text-sm font-medium text-white backdrop-blur-sm">
+                  <div className="call-stage-name absolute bottom-3 left-3 max-w-[70%] truncate rounded-md bg-black/75 px-2.5 py-1.5 text-sm font-medium backdrop-blur-sm">
                     {name}
                   </div>
-                  <div className={`absolute left-3 top-3 rounded-md bg-black/70 px-2 py-1 text-[10px] font-medium backdrop-blur-sm ${
-                    state.muted ? 'text-[#f23f43]' : state.deafened ? 'text-[#f0b132]' : 'text-[#23a55a]'
-                  }`}>
+                  <div
+                    className={`call-stage-status absolute left-3 top-3 rounded-md bg-black/70 px-2 py-1 text-[10px] font-medium backdrop-blur-sm ${
+                      state.muted ? 'text-[#f23f43]' : state.deafened ? 'text-[#f0b132]' : 'text-[#23a55a]'
+                    }`}
+                    data-state={state.muted ? 'muted' : state.deafened ? 'deafened' : cameraVisible ? 'video' : 'connected'}
+                  >
                     {state.muted ? 'Muted' : state.deafened ? 'Deafened' : cameraVisible ? 'Video on' : 'Connected'}
                   </div>
                   {renderParticipantMenu(participant, name)}
@@ -869,7 +872,7 @@ export default function CallScreen({ onOpenChat, deferredUpdate, onOpenUpdate })
               <video ref={localVideoRef} autoPlay muted playsInline />
             </div>
 
-            <div className="grid w-full max-w-[860px] grid-cols-1 place-items-center gap-3 sm:grid-cols-2">
+            <div className="grid w-full max-w-215 grid-cols-1 place-items-center gap-3 sm:grid-cols-2">
               {activeParticipants.map((participant) => {
                 const isLocal = participant.user_id === currentUser?.id;
                 const participantUser = participant.user || {};
@@ -882,7 +885,7 @@ export default function CallScreen({ onOpenChat, deferredUpdate, onOpenUpdate })
                 const isSpeaking = !!speakingUsers[participant.user_id];
 
                 return (
-                  <div key={participant.user_id} className="group relative aspect-video w-full max-w-[420px] overflow-hidden rounded-xl border border-[#1e1f22] bg-[#09080c] shadow-2xl transition-all hover:border-[#2b2d31]">
+                  <div key={participant.user_id} className="group relative aspect-video w-full max-w-105 overflow-hidden rounded-xl border border-[#1e1f22] bg-[#09080c] shadow-2xl transition-all hover:border-[#2b2d31]">
                     <div className={`absolute left-1/2 top-1/2 flex h-20 w-20 -translate-x-1/2 -translate-y-1/2 items-center justify-center overflow-hidden rounded-full border-2 bg-[#1e1f22] text-2xl font-bold text-white shadow-xl transition-all duration-150 ${
                       muted
                         ? 'border-[#f23f43]'
@@ -896,20 +899,21 @@ export default function CallScreen({ onOpenChat, deferredUpdate, onOpenUpdate })
                         participantName.substring(0, 2).toUpperCase()
                       )}
                     </div>
-                    <div className="absolute bottom-3 left-3 max-w-[70%] truncate rounded-md bg-black/75 px-2.5 py-1.5 text-sm font-medium text-white backdrop-blur-sm">
+                    <div className="call-stage-name absolute bottom-3 left-3 max-w-[70%] truncate rounded-md bg-black/75 px-2.5 py-1.5 text-sm font-medium backdrop-blur-sm">
                       {participantName}{isLocal ? ' (You)' : ''}
                     </div>
                     <div
-                      className={`absolute left-3 top-3 rounded-md bg-black/70 px-2 py-1 text-[10px] font-medium backdrop-blur-sm ${
+                      className={`call-stage-status absolute left-3 top-3 rounded-md bg-black/70 px-2 py-1 text-[10px] font-medium backdrop-blur-sm ${
                         muted ? 'text-[#f23f43]' : noiseActive ? 'text-[#23a55a]' : 'text-[#b5bac1]'
                       }`}
+                      data-state={muted ? 'muted' : noiseActive ? 'noise' : 'connected'}
                       title={noiseActive ? 'Noise suppression is active' : 'Noise suppression is not active'}
                     >
                       {muted ? 'Muted' : noiseActive ? 'Noise suppression on' : 'Connected'}
                     </div>
                     {renderParticipantMenu(participant, participantName)}
                     {participantState.deafened && (
-                      <span className="absolute right-14 top-3 rounded-md border border-[#1e1f22] bg-black/80 px-2 py-1 text-xs">🔇 Deafened</span>
+                      <span className="call-stage-deafened absolute right-14 top-3 rounded-md border border-[#1e1f22] bg-black/80 px-2 py-1 text-xs text-[#f2f3f5]">🔇 Deafened</span>
                     )}
                   </div>
                 );
@@ -928,7 +932,7 @@ export default function CallScreen({ onOpenChat, deferredUpdate, onOpenUpdate })
       </div>
 
       {/* CONTROLS BAR */}
-      <div className="h-20 flex items-center justify-between px-6 shrink-0 border-t border-[#18191c]/40 relative bg-[#000000] z-20">
+      <div className="h-20 flex items-center justify-between px-6 shrink-0 relative bg-[#000000] z-20">
 
         {/* Left: Invite */}
         <div className="flex items-center">

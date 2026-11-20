@@ -124,7 +124,7 @@ export function ScreenSharePicker({
       <section
         className={`flex max-h-[88vh] ${
           isNativePicker ? 'w-[min(860px,94vw)]' : 'w-[min(680px,94vw)]'
-        } flex-col overflow-hidden rounded-2xl border border-white/[0.1] bg-black/85 text-white shadow-[0_28px_100px_rgba(0,0,0,0.8)] backdrop-blur-xl`}
+        } flex-col overflow-hidden rounded-2xl border border-[var(--app-border)] bg-[var(--app-surface)] text-[var(--app-text)] shadow-[0_28px_100px_rgba(0,0,0,0.8)] backdrop-blur-xl`}
         role="dialog"
         aria-modal="true"
         aria-labelledby="screen-share-title"
@@ -137,7 +137,7 @@ export function ScreenSharePicker({
             </div>
             <button
               type="button"
-              className="flex h-9 w-9 items-center justify-center rounded-lg text-[#949ba4] transition hover:bg-white/[0.08] hover:text-white"
+              className="flex h-9 w-9 items-center justify-center rounded-lg text-[#949ba4] transition hover:bg-[var(--app-surface-hover)] hover:text-[var(--app-text)]"
               onClick={onCancel}
               aria-label="Close"
             >
@@ -148,7 +148,7 @@ export function ScreenSharePicker({
           </div>
 
           {isNativePicker && (
-            <nav className="mt-5 grid grid-cols-2 gap-1 rounded-xl bg-[#0d0e10] p-1" aria-label="Share source type">
+            <nav className="mt-5 grid grid-cols-2 gap-1 rounded-xl bg-[var(--app-surface-raised)] p-1" aria-label="Share source type">
               {tabs.map(({ id, label, Icon }) => (
                 <button
                   key={id}
@@ -157,7 +157,7 @@ export function ScreenSharePicker({
                   className={`flex min-h-10 items-center justify-center gap-2 rounded-lg px-3 py-2 text-sm font-semibold transition ${
                     activeTab === id
                       ? 'bg-[#303136] text-white shadow-sm'
-                      : 'text-[#949ba4] hover:bg-white/[0.04] hover:text-[#dbdee1]'
+                      : 'text-[#949ba4] hover:bg-[var(--app-surface-hover)] hover:text-[var(--app-text)]'
                   }`}
                   aria-pressed={activeTab === id}
                 >
@@ -173,7 +173,7 @@ export function ScreenSharePicker({
           {isNativePicker ? (
             <>
               {sourcesError && (
-                <p role="alert" className="mb-4 rounded-lg border border-[#f23f43]/25 bg-[#f23f43]/10 px-3 py-2 text-xs text-[#ff8b8e]">
+                <p role="alert" className="screen-share-error mb-4 rounded-lg border border-[#f23f43]/25 bg-[#f23f43]/10 px-3 py-2 text-xs text-[#ff8b8e]">
                   {sourcesError}
                 </p>
               )}
@@ -201,11 +201,11 @@ export function ScreenSharePicker({
                       className={`group overflow-hidden rounded-xl border text-left transition disabled:opacity-50 ${
                         isSelected
                           ? 'border-[#5865f2] bg-[#5865f2]/[0.08] ring-1 ring-[#5865f2]/40'
-                          : 'border-white/[0.08] bg-[#202126] hover:border-white/20 hover:bg-[#25262c]'
+                          : 'border-[var(--app-border)] bg-[var(--app-surface-raised)] hover:border-[var(--app-border-strong)] hover:bg-[var(--app-surface-hover)]'
                       }`}
                       aria-pressed={isSelected}
                     >
-                      <div ref={previewRef} className="relative flex aspect-video items-center justify-center overflow-hidden bg-[#0b0c0e]">
+                      <div ref={previewRef} className="relative flex aspect-video items-center justify-center overflow-hidden bg-[var(--app-background)]">
                         {preview ? (
                           <img
                             src={preview}
@@ -213,7 +213,7 @@ export function ScreenSharePicker({
                             className="absolute inset-0 h-full w-full object-contain"
                           />
                         ) : (
-                          <div className="flex h-12 w-12 items-center justify-center rounded-xl bg-[#2b2d31] text-[#949ba4]">
+                          <div className="flex h-12 w-12 items-center justify-center rounded-xl bg-[var(--app-surface)] text-[#949ba4]">
                             <SourceIcon size={24} />
                           </div>
                         )}
@@ -225,9 +225,9 @@ export function ScreenSharePicker({
                         <span className="absolute inset-x-0 bottom-0 h-10 bg-gradient-to-t from-black/50 to-transparent" />
                       </div>
                       <div className="flex min-h-11 items-center gap-2.5 px-3 py-2">
-                        <SourceIcon size={15} className={`shrink-0 ${isSelected ? 'text-[#aeb8ff]' : 'text-[#949ba4]'}`} />
+                        <SourceIcon size={15} className={`shrink-0 ${isSelected ? 'text-[#5865f2]' : 'text-[#949ba4]'}`} />
                         <span className="min-w-0 flex-1 truncate text-sm font-semibold">{source.name}</span>
-                        {isSelected && <span className="text-[10px] font-bold uppercase tracking-wide text-[#aeb8ff]">Selected</span>}
+                        {isSelected && <span className="text-[10px] font-bold uppercase tracking-wide text-[#5865f2]">Selected</span>}
                       </div>
                     </button>
                   );
@@ -244,7 +244,7 @@ export function ScreenSharePicker({
             </>
           ) : (
             <div className="flex items-center gap-4 rounded-lg border border-[#3f4147] bg-[#1e1f22] px-5 py-4">
-              <div className="flex h-11 w-11 shrink-0 items-center justify-center rounded-xl bg-[#2b2d31] text-[#aeb8ff]">
+              <div className="flex h-11 w-11 shrink-0 items-center justify-center rounded-xl bg-[var(--app-surface)] text-[#5865f2]">
                 <Monitor size={32} />
               </div>
               <div>
@@ -258,7 +258,7 @@ export function ScreenSharePicker({
           )}
         </main>
 
-        <footer className="flex flex-col gap-3 border-t border-white/[0.08] bg-black/35 px-4 py-3 sm:flex-row sm:items-center sm:justify-between sm:px-5">
+        <footer className="flex flex-col gap-3 border-t border-[var(--app-border)] bg-[var(--app-surface-raised)] px-4 py-3 sm:flex-row sm:items-center sm:justify-between sm:px-5">
           <div className="flex flex-wrap items-center gap-2">
             <div className="flex items-center gap-1 rounded-lg bg-[#25262b] p-1">
               {qualityPresets.map(({ value, label }) => (
@@ -278,7 +278,7 @@ export function ScreenSharePicker({
               ))}
             </div>
 
-            <div className="mx-0.5 hidden h-5 w-px bg-white/10 sm:block" />
+            <div className="mx-0.5 hidden h-5 w-px bg-[var(--app-border)] sm:block" />
 
             <div className="flex items-center gap-1 rounded-lg bg-[#25262b] p-1">
               {fpsPresets.map(({ value, label }) => (
@@ -298,7 +298,7 @@ export function ScreenSharePicker({
               ))}
             </div>
 
-            <div className="mx-0.5 hidden h-5 w-px bg-white/10 sm:block" />
+            <div className="mx-0.5 hidden h-5 w-px bg-[var(--app-border)] sm:block" />
             <button
               type="button"
               role="switch"
@@ -307,7 +307,7 @@ export function ScreenSharePicker({
                 ? "Shares other apps' audio while excluding Discord Lite call audio to prevent echo."
                 : undefined}
               onClick={() => setIncludeSystemAudio((v) => !v)}
-              className={`flex items-center gap-1.5 rounded-md px-2.5 py-1.5 text-xs font-semibold transition ${
+              className={`screen-share-audio-toggle flex items-center gap-1.5 rounded-md px-2.5 py-1.5 text-xs font-semibold transition ${
                 includeSystemAudio ? 'bg-[#23a55a]/15 text-[#57f287]' : 'bg-[#25262b] text-[#b5bac1]'
               }`}
             >
@@ -316,10 +316,10 @@ export function ScreenSharePicker({
             </button>
             {isNativePicker && (
               <>
-                <div className="mx-0.5 hidden h-5 w-px bg-white/10 sm:block" />
+                <div className="mx-0.5 hidden h-5 w-px bg-[var(--app-border)] sm:block" />
                 <button
                   type="button"
-                  className="flex items-center gap-1.5 rounded-lg bg-[#25262b] px-2.5 py-2 text-xs font-medium text-[#b5bac1] transition hover:text-white disabled:opacity-50"
+                  className="flex items-center gap-1.5 rounded-lg bg-[var(--app-surface)] px-2.5 py-2 text-xs font-medium text-[#b5bac1] transition hover:bg-[var(--app-surface-hover)] hover:text-[var(--app-text)] disabled:opacity-50"
                   onClick={onRefreshSources}
                   disabled={sourcesLoading}
                 >
@@ -332,7 +332,7 @@ export function ScreenSharePicker({
           <div className="flex items-center justify-end gap-2">
             <button
               type="button"
-              className="rounded-lg px-4 py-2 text-sm font-semibold text-[#b5bac1] transition hover:bg-white/[0.06] hover:text-white"
+              className="rounded-lg px-4 py-2 text-sm font-semibold text-[#b5bac1] transition hover:bg-[var(--app-surface-hover)] hover:text-[var(--app-text)]"
               onClick={onCancel}
             >
               Cancel

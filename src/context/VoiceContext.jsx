@@ -1082,8 +1082,6 @@ export const VoiceProvider = ({ children }) => {
     });
   };
 
-  const playNotificationSound = () => playSoundEffect('notification', 0.45);
-
   const startCallRingtone = () => {
     const audio = getSoundEffect('calling');
     if (!audio.paused) return;
@@ -2613,7 +2611,6 @@ export const VoiceProvider = ({ children }) => {
       setParticipantMuted,
       setStreamVolume,
       setStreamMuted,
-      playNotificationSound,
       changeMicrophone,
       changeSpeaker,
       updateAudioDevices,

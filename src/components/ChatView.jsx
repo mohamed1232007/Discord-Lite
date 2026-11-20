@@ -59,6 +59,7 @@ export default function ChatView({
   const [hasMore, setHasMore] = useState(false);
   const [loadingMore, setLoadingMore] = useState(false);
   const [sending, setSending] = useState(false);
+  const [highlightedMessageId, setHighlightedMessageId] = useState(targetMessageId);
   const messagesEndRef = useRef(null);
   const messageElementsRef = useRef(new Map());
   const loadedTargetMessageRef = useRef(null);
@@ -95,6 +96,17 @@ export default function ChatView({
 
   useEffect(() => {
     loadedTargetMessageRef.current = null;
+    if (!targetMessageId) return undefined;
+    const raf = requestAnimationFrame(() => {
+      setHighlightedMessageId(targetMessageId);
+    });
+    const timer = setTimeout(() => {
+      setHighlightedMessageId(null);
+    }, 3000);
+    return () => {
+      cancelAnimationFrame(raf);
+      clearTimeout(timer);
+    };
   }, [targetMessageId]);
 
   // جلب أحدث صفحة من الرسائل + دمجها مع ما تم تحميله مسبقاً
@@ -358,7 +370,7 @@ export default function ChatView({
           </p>
         </div>
 
-        <div className="w-full h-[1px] bg-[#18191c] my-2" />
+        <div className="w-full h-px bg-[#18191c] my-2" />
 
         {hasMore && !loading && (
           <div className="flex justify-center pb-2">
@@ -395,8 +407,10 @@ export default function ChatView({
                   if (element) messageElementsRef.current.set(m.id, element);
                   else messageElementsRef.current.delete(m.id);
                 }}
-                className={`flex items-start gap-4 hover:bg-[#0c0d0e] -mx-4 px-4 py-1.5 rounded transition group ${
-                  targetMessageId === m.id ? 'bg-[#5865f2]/20 ring-1 ring-[#5865f2]/50' : ''
+                className={`flex items-start gap-4 hover:bg-[#0c0d0e] -mx-4 px-4 py-1.5 rounded transition-all duration-300 group ${
+                  highlightedMessageId === m.id
+                    ? 'bg-[#5865f2]/25 ring-1 ring-[#5865f2]/60 shadow-[0_0_12px_rgba(88,101,242,0.35)]'
+                    : ''
                 }`}
               >
                 <div className={`w-10 h-10 rounded-full flex items-center justify-center font-bold text-xs text-white shrink-0 ${
@@ -411,7 +425,7 @@ export default function ChatView({
                     </span>
                     <span className="text-[11px] text-[#80848e]">{timeStr}</span>
                   </div>
-                  <p className="text-[#dbdee1] text-sm mt-0.5 leading-relaxed break-words">{m.content}</p>
+                  <p className="text-[#dbdee1] text-sm mt-0.5 leading-relaxed wrap-break-word">{m.content}</p>
                 </div>
               </div>
             );
