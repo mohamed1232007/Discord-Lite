@@ -8,10 +8,12 @@ import {
   HelpCircle,
   Check,
   X,
-  Loader2
+  Loader2,
+  Headphones
 } from 'lucide-react';
 import { useAuth } from '../context/AuthContext';
 import { BACKEND_URL } from '../services/backendUrl';
+import { callApi } from '../services/callApi';
 import { UpdateActionButton } from './DiscordUpdater';
 
 export default function FriendsView({ onStartChat, deferredUpdate, onOpenUpdate }) {
@@ -27,6 +29,7 @@ export default function FriendsView({ onStartChat, deferredUpdate, onOpenUpdate 
   const [searchFeedback, setSearchFeedback] = useState('');
   const [requestStatus, setRequestStatus] = useState({});
   const [respondError, setRespondError] = useState('');
+  const [activeActivities, setActiveActivities] = useState([]);
 
   const fetchFriends = useCallback(async () => {
     if (!token) return;
@@ -74,6 +77,27 @@ export default function FriendsView({ onStartChat, deferredUpdate, onOpenUpdate 
       window.clearInterval(interval);
     };
   }, [token, fetchFriends, fetchPending]);
+
+  useEffect(() => {
+    if (!token) return undefined;
+
+    let cancelled = false;
+    const fetchActiveActivities = async () => {
+      try {
+        const data = await callApi(token, '/active');
+        if (!cancelled) setActiveActivities(data.activities || []);
+      } catch (error) {
+        console.warn('[Friends] Could not load active activities:', error);
+      }
+    };
+
+    fetchActiveActivities();
+    const interval = window.setInterval(fetchActiveActivities, 10000);
+    return () => {
+      cancelled = true;
+      window.clearInterval(interval);
+    };
+  }, [token]);
 
   const handleSearchUsers = useCallback(async (e) => {
     if (e) e.preventDefault();
@@ -413,9 +437,55 @@ export default function FriendsView({ onStartChat, deferredUpdate, onOpenUpdate 
         {/* Right Panel: Active Now */}
         <div className="w-85 border-l border-[#18191c] p-4 hidden xl:flex flex-col select-none overflow-y-auto discord-scrollbar">
           <h3 className="text-xl font-extrabold text-white mb-4">Active Now</h3>
-          <div className="text-xs text-[#80848e]">
-            When your friends are active (in voice or playing), they will appear right here.
-          </div>
+          {activeActivities.length === 0 ? (
+            <div className="text-xs text-[#80848e]">
+              When your friends are active in voice, they will appear right here.
+            </div>
+          ) : (
+            <div className="space-y-2">
+              {activeActivities.map((activity) => {
+                const friend = activity.friend;
+                const displayName = friend?.display_name || friend?.username || 'Friend';
+                return (
+                  <button
+                    key={`${activity.roomId}-${activity.friendId}`}
+                    type="button"
+                    onClick={() => {
+                      if (friend) onStartChat(friend);
+                    }}
+                    className="updater-glass-card updater-toast-enter relative isolate w-full overflow-hidden rounded-2xl bg-white/[0.045] p-4 text-left text-white shadow-[0_14px_45px_rgba(0,0,0,0.38)] backdrop-blur-2xl transition duration-300 hover:-translate-y-0.5 hover:bg-white/[0.065]"
+                  >
+                    <span className="updater-glass-tint pointer-events-none absolute inset-0" aria-hidden="true" />
+                    <span className="relative z-10 flex items-center gap-3">
+                      <span className="relative shrink-0">
+                        {friend?.avatar_url ? (
+                          <img
+                            src={friend.avatar_url}
+                            alt=""
+                            className="h-11 w-11 rounded-full object-cover"
+                          />
+                        ) : (
+                          <span className="flex h-11 w-11 items-center justify-center rounded-full bg-gradient-to-br from-[#7581ff]/70 to-[#5865f2]/55 text-sm font-bold text-white">
+                            {displayName.substring(0, 2).toUpperCase()}
+                          </span>
+                        )}
+                        <span className="absolute -bottom-0.5 -right-0.5 h-3.5 w-3.5 rounded-full border-2 border-[#17182a] bg-[#23a55a]" />
+                      </span>
+                      <span className="min-w-0">
+                        <span className="block truncate text-sm font-semibold text-white">{displayName}</span>
+                        <span className="mt-1 flex items-center gap-1.5 text-xs text-[#9fe8bd]">
+                          <Headphones size={13} />
+                          <span>
+                            In Voice · {activity.participantCount || 1} {activity.participantCount === 1 ? 'member' : 'members'}
+                          </span>
+                        </span>
+                      </span>
+                    </span>
+                  </button>
+                );
+              })}
+            </div>
+          )}
         </div>
       </div>
     </div>

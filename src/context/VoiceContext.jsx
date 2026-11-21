@@ -933,42 +933,36 @@ export const VoiceProvider = ({ children }) => {
         const engine = denoiseEngineRef.current;
         const publishedMicrophone = localPublishedTracksRef.current.get('microphone');
         let refreshKrispAfterMicSwitch = false;
+        const nextTrack = newRawStream.getAudioTracks()[0];
+        if (!nextTrack) throw new Error('The selected microphone did not provide an audio track.');
+        nextTrack.enabled = !localCallStateRef.current.muted;
+
         if (
           noiseLevelRef.current === 'krisp'
           && noiseSuppressionEnabledRef.current
           && publishedMicrophone instanceof LocalAudioTrack
         ) {
-          if (engine && !engine.destroyed) {
-            await engine.setSource(newRawStream);
-          } else {
-            const nextTrack = newRawStream.getAudioTracks()[0];
-            if (!nextTrack) throw new Error('The selected microphone did not provide an audio track.');
-            nextTrack.enabled = !localCallStateRef.current.muted;
-            await publishedMicrophone.replaceTrack(nextTrack);
-
-            const localStream = localStreamRef.current;
-            const oldTrack = localStream.getAudioTracks()[0];
-            if (oldTrack && oldTrack !== nextTrack) localStream.removeTrack(oldTrack);
-            if (!localStream.getAudioTracks().includes(nextTrack)) localStream.addTrack(nextTrack);
-            if (oldTrack && oldTrack !== nextTrack && oldTrack !== rawMicStreamRef.current?.getAudioTracks()[0]) {
-              oldTrack.stop();
-            }
-          }
-          refreshKrispAfterMicSwitch = true;
-        } else if (engine && !engine.destroyed) {
-          await engine.setSource(newRawStream);
-        } else {
-          // مفيش محرك (فشل تشغيله) — نستخدم المايك الجديد مباشرة
-          const newTrack = newRawStream.getAudioTracks()[0];
-          if (!newTrack) throw new Error('The selected microphone did not provide an audio track.');
-          newTrack.enabled = !localCallStateRef.current.muted;
-          await publishLiveKitTrack(newTrack, 'microphone', Track.Source.Microphone);
+          await publishedMicrophone.replaceTrack(nextTrack);
 
           const localStream = localStreamRef.current;
           const oldTrack = localStream.getAudioTracks()[0];
-          if (oldTrack && oldTrack !== newTrack) localStream.removeTrack(oldTrack);
-          if (!localStream.getAudioTracks().includes(newTrack)) localStream.addTrack(newTrack);
-          if (oldTrack && oldTrack !== newTrack) oldTrack.stop();
+          if (oldTrack && oldTrack !== nextTrack) localStream.removeTrack(oldTrack);
+          if (!localStream.getAudioTracks().includes(nextTrack)) localStream.addTrack(nextTrack);
+          if (oldTrack && oldTrack !== nextTrack) oldTrack.stop();
+          refreshKrispAfterMicSwitch = true;
+        } else if (engine && !engine.destroyed) {
+          await engine.setSource(newRawStream);
+          const outputTrack = engine.outputTrack;
+          if (outputTrack) outputTrack.enabled = !localCallStateRef.current.muted;
+        } else {
+          // مفيش محرك (فشل تشغيله) — نستخدم المايك الجديد مباشرة
+          await publishLiveKitTrack(nextTrack, 'microphone', Track.Source.Microphone);
+
+          const localStream = localStreamRef.current;
+          const oldTrack = localStream.getAudioTracks()[0];
+          if (oldTrack && oldTrack !== nextTrack) localStream.removeTrack(oldTrack);
+          if (!localStream.getAudioTracks().includes(nextTrack)) localStream.addTrack(nextTrack);
+          if (oldTrack && oldTrack !== nextTrack) oldTrack.stop();
 
           noiseSuppressionActiveRef.current = false;
           setIsNoiseSuppressionActive(false);
@@ -1007,7 +1001,12 @@ export const VoiceProvider = ({ children }) => {
     setSelectedSpeaker(deviceId);
     toast.info('Audio output device changed successfully');
 
-    const audioElements = Array.from(remoteAudioElementsRef.current.values());
+    const audioElements = [
+      ...Array.from(remoteAudioElementsRef.current.values()),
+      ...Array.from(remoteScreenAudioElementsRef.current.values()),
+    ].filter((element, index, elements) => (
+      element && elements.indexOf(element) === index
+    ));
     if (audioElements.some((element) => typeof element.setSinkId === 'function')) {
       try {
         await Promise.all(audioElements.map((element) => (

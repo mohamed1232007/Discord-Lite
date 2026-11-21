@@ -92,6 +92,7 @@ export default function CallScreen({ onOpenChat, deferredUpdate, onOpenUpdate })
     speakingUsers,
     changeMicrophone,
     changeSpeaker,
+    updateAudioDevices,
     inviteParticipants,
   } = useVoice();
 
@@ -961,6 +962,7 @@ export default function CallScreen({ onOpenChat, deferredUpdate, onOpenUpdate })
             <button 
               type="button" 
               onClick={() => {
+                updateAudioDevices?.();
                 setShowMicMenu(prev => !prev);
                 setShowSpeakerMenu(false);
               }}
@@ -1020,6 +1022,7 @@ export default function CallScreen({ onOpenChat, deferredUpdate, onOpenUpdate })
             <button 
               type="button" 
               onClick={() => {
+                updateAudioDevices?.();
                 setShowSpeakerMenu(prev => !prev);
                 setShowMicMenu(false);
               }}
